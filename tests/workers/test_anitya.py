@@ -3,15 +3,16 @@ import flexmock
 import pytest
 from requests import Response
 
-from cucoslib.enums import EcosystemBackend
-from cucoslib.models import Ecosystem, create_db_scoped_session
-from cucoslib.utils import DownstreamMapCache
-from cucoslib.workers import AnityaTask
+from f8a_worker.enums import EcosystemBackend
+from f8a_worker.models import Ecosystem, create_db_scoped_session
+from f8a_worker.utils import DownstreamMapCache
+from f8a_worker.workers import AnityaTask
 
 from ..conftest import rdb
 
 example_projects = [
-        ('npm', 'underscore', '563b1d9f13887d4bdcb6b06270a54825', 'rh-dist-git filenam nodejs-underscore'),
+        ('npm', 'underscore', '563b1d9f13887d4bdcb6b06270a54825',
+         'rh-dist-git filenam nodejs-underscore'),
 ]
 
 

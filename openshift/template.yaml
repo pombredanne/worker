@@ -11,14 +11,14 @@ objects:
   kind: DeploymentConfig
   metadata:
     labels:
-      service: bayesian-worker-${WORKER_ADMINISTRATION_REGION}
-    name: bayesian-worker-${WORKER_ADMINISTRATION_REGION}
+      service: bayesian-worker-${WORKER_ADMINISTRATION_REGION}${WORKER_NAME_SUFFIX}
+    name: bayesian-worker-${WORKER_ADMINISTRATION_REGION}${WORKER_NAME_SUFFIX}
   spec:
     selector:
-      service: bayesian-worker-${WORKER_ADMINISTRATION_REGION}
+      service: bayesian-worker-${WORKER_ADMINISTRATION_REGION}${WORKER_NAME_SUFFIX}
     strategy:
-      type: Rolling
-      rollingParams:
+      type: Recreate
+      recreateParams:
         pre:
           failurePolicy: Retry
           execNewPod:
@@ -27,7 +27,7 @@ objects:
     template:
       metadata:
         labels:
-          service: bayesian-worker-${WORKER_ADMINISTRATION_REGION}
+          service: bayesian-worker-${WORKER_ADMINISTRATION_REGION}${WORKER_NAME_SUFFIX}
       spec:
         containers:
         - env:
@@ -40,6 +40,12 @@ objects:
                 key: deployment-prefix
           - name: WORKER_ADMINISTRATION_REGION
             value: "${WORKER_ADMINISTRATION_REGION}"
+          - name: WORKER_EXCLUDE_QUEUES
+            value: "${WORKER_EXCLUDE_QUEUES}"
+          - name: WORKER_INCLUDE_QUEUES
+            value: "${WORKER_INCLUDE_QUEUES}"
+          - name: WORKER_RUN_DB_MIGRATIONS
+            value: "${WORKER_RUN_DB_MIGRATIONS}"
           - name: POSTGRESQL_DATABASE
             valueFrom:
               secretKeyRef:
@@ -90,54 +96,25 @@ objects:
               secretKeyRef:
                 name: worker
                 key: github-token
-          - name: PULP_URL
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: pulp-url
-          - name: PULP_USERNAME
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: pulp-username
-          - name: PULP_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: pulp-password
-          - name: BLACKDUCK_HOST
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: blackduck-host
-          - name: BLACKDUCK_PORT
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: blackduck-port
-          - name: BLACKDUCK_SCHEME
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: blackduck-scheme
-          - name: BLACKDUCK_USERNAME
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: blackduck-username
-          - name: BLACKDUCK_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: blackduck-password
-          - name: BLACKDUCK_PATH
-            valueFrom:
-              secretKeyRef:
-                name: worker
-                key: blackduck-path
           - name: PGBOUNCER_SERVICE_HOST
             value: bayesian-pgbouncer
-          - name: CCS_SERVER_SERVICE_HOST
+          - name: PGM_SERVICE_HOST
+            value: bayesian-kronos
+          - name: MAX_COMPANION_PACKAGES
+            value: "4"
+          - name: MAX_ALTERNATE_PACKAGES
+            value: "2"
+          - name: OUTLIER_THRESHOLD
+            value: "0.88"
+          - name: UNKNOWN_PACKAGES_THRESHOLD
+            value: "0.3"
+          - name: LICENSE_SERVICE_HOST
+            value: f8a-license-analysis
+          - name: PGM_SERVICE_PORT
+            value: "6006"
+          - name: LICENSE_SERVICE_PORT
+            value: "6162"
+          - name: F8A_SERVER_SERVICE_HOST
             value: bayesian-api
           - name: ANITYA_SERVICE_HOST
             value: bayesian-anitya
@@ -154,31 +131,59 @@ objects:
           readinessProbe:
             exec:
               command: ["worker-readiness.sh"]
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 5
+            initialDelaySeconds: 20
+            periodSeconds: 60
+            timeoutSeconds: 30
           livenessProbe:
             exec:
               command: ["worker-liveness.sh"]
-            initialDelaySeconds: 20
+            initialDelaySeconds: 60
             periodSeconds: 60
-            timeoutSeconds: 5
+            timeoutSeconds: 30
           resources:
             requests:
               memory: "512Mi"
+              cpu: "500m"
             limits:
-              memory: "2048Mi"
+              memory: "1536Mi"
+              cpu: "500m"
         restartPolicy: Always
     test: false
     triggers:
     - type: ConfigChange
+    replicas: ${REPLICAS}
+
 
 parameters:
-- description: Worker region for serving tasks - api or ingestion
+- description: Worker region for serving tasks - api, priority or ingestion
   displayName: Worker administration region
   required: true
   name: WORKER_ADMINISTRATION_REGION
   value: "api"
+
+- description: Exclude queues so worker does not serve particular tasks
+  displayName: Exclude queues
+  required: false
+  name: WORKER_EXCLUDE_QUEUES
+  value: ""
+
+- description: Let a worker listen on listed queues so worker serves only listed tasks
+  displayName: Include queues
+  required: false
+  name: WORKER_INCLUDE_QUEUES
+  value: ""
+
+- description: A suffix for worker to distinguish different worker types based on configuration
+  displayName: Worker name suffix
+  required: false
+  name: WORKER_NAME_SUFFIX
+  value: ""
+
+- description: Run database migrations on worker start up
+  displayName: Run database migrations
+  required: false
+  name: WORKER_RUN_DB_MIGRATIONS
+  value: ""
 
 - description: Turn off tasks that are run on OpenShift instance and require internal services
   displayName: Openshift deployment
@@ -203,3 +208,9 @@ parameters:
   required: true
   name: IMAGE_TAG
   value: "latest"  # image-tag
+
+- description: Number of deployment replicas
+  displayName: Number of deployment replicas
+  required: true
+  name: REPLICAS
+  value: "1"

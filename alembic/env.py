@@ -9,13 +9,13 @@ from logging.config import fileConfig
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-if 'CCS_POSTGRES' in os.environ:
+if 'F8A_POSTGRES' in os.environ:
     # if we only need to migrate, we don't really need to import all the stuff,
     #   we just need to set sqlalchemy.url
     target_metadata = MetaData()
-    config.set_main_option('sqlalchemy.url', os.environ['CCS_POSTGRES'])
+    config.set_main_option('sqlalchemy.url', os.environ['F8A_POSTGRES'])
     if 'MIGRATE_ONLY' not in os.environ:
-        from cucoslib.models import Base
+        from f8a_worker.models import Base
         for t in Base.metadata.tables.values():
             t.tometadata(target_metadata)
 else:
@@ -72,11 +72,13 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True
+            compare_type=True,
+            transaction_per_migration=True
         )
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

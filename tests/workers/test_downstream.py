@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import pytest
-import cucoslib.workers.downstream
-import cucoslib.utils
-from cucoslib.workers import DownstreamUsageTask
-from cucoslib.enums import EcosystemBackend
-from cucoslib.models import Ecosystem
+import f8a_worker.workers.downstream
+import f8a_worker.utils
+from f8a_worker.workers import DownstreamUsageTask
+from f8a_worker.enums import EcosystemBackend
+from f8a_worker.models import Ecosystem
 from requests import Response
-import json, os
+import json
+import os
 
 example_projects = [
     ('pypi', 'six', 'python-six', '1.9.0'),
     ('npm', 'serve-static', 'nodejs-serve-static', '1.10.0'),
     # TODO: Figure out what's wrong with the Java case
-    #('maven', 'junit', 'junit', '4.12.0'),
+    # ('maven', 'junit', 'junit', '4.12.0'),
     ('rubygems', 'nokogiri', 'rubygem-nokogiri', '1.5.11'),
 ]
 
@@ -62,6 +63,7 @@ def _make_brew_command(srpms_to_report):
             return 0, stdout, ""
     return MockBrewCommand
 
+
 def _make_pulp_client(usage_to_report):
     class MockPulpClient(object):
         def get_cdn_metadata_for_srpm(self, srpm_filename):
@@ -78,11 +80,11 @@ class TestDownstreamUsage(object):
     def test_execute_no_anitya(self, rdb, ecosystem, project, package, version, monkeypatch):
         rdb.add(_make_ecosystem(ecosystem))
         rdb.commit()
-        monkeypatch.setattr(cucoslib.workers.downstream,
+        monkeypatch.setattr(f8a_worker.workers.downstream,
                             "TimedCommand",
                             _make_brew_command([]))
         # ensure we return None for digests
-        monkeypatch.setattr(cucoslib.workers.downstream.DownstreamUsageTask,
+        monkeypatch.setattr(f8a_worker.workers.downstream.DownstreamUsageTask,
                             "parent_task_result",
                             lambda x, y: None)
         task = DownstreamUsageTask.create_test_instance(task_name='redhat_downstream')
@@ -119,7 +121,7 @@ class TestDownstreamUsage(object):
             }
             result._content = json.dumps(dummy_data).encode(result.encoding)
             return result
-        monkeypatch.setattr(cucoslib.workers.downstream,
+        monkeypatch.setattr(f8a_worker.workers.downstream,
                             "_query_anitya_url",
                             _query_anitya_url)
 
@@ -139,11 +141,11 @@ class TestDownstreamUsage(object):
             {
                 'package_name': package,
                 'version': version,
-                'release':  dummy_releases[1],
+                'release': dummy_releases[1],
                 'filename': dummy_srpm_names[1],
             },
         ]
-        monkeypatch.setattr(cucoslib.workers.downstream,
+        monkeypatch.setattr(f8a_worker.workers.downstream,
                             "TimedCommand",
                             _make_brew_command(dummy_srpm_details))
         # Mock the attempted access to Pulp (these are not real product names)
@@ -159,11 +161,11 @@ class TestDownstreamUsage(object):
                 "rhsm_content_sets": ["rhsm-rhel-7"],
             },
         }
-        monkeypatch.setattr(cucoslib.workers.downstream,
+        monkeypatch.setattr(f8a_worker.workers.downstream,
                             "Pulp",
                             _make_pulp_client(dummy_usage_details))
         # ensure we return None for digests
-        monkeypatch.setattr(cucoslib.workers.downstream.DownstreamUsageTask,
+        monkeypatch.setattr(f8a_worker.workers.downstream.DownstreamUsageTask,
                             "parent_task_result",
                             lambda x, y: None)
 

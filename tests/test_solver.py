@@ -2,49 +2,53 @@ import pytest
 
 import datetime
 import flexmock
-from cucoslib.enums import EcosystemBackend
-from cucoslib.models import Analysis, Ecosystem, Package, Version
-from cucoslib.solver import Dependency, NpmDependencyParser,\
-    get_ecosystem_solver, CucosReleasesFetcher, NpmReleasesFetcher
+from f8a_worker.models import Analysis, Package, Version
+from f8a_worker.solver import\
+    (get_ecosystem_solver, Dependency,
+     PypiDependencyParser, NpmDependencyParser, OSSIndexDependencyParser, NugetDependencyParser,
+     GolangDependencyParser, MavenReleasesFetcher, NpmReleasesFetcher, NugetReleasesFetcher,
+     F8aReleasesFetcher, GolangReleasesFetcher)
 
 
-@pytest.fixture
-def maven(rdb):
-    maven = Ecosystem(name='maven', backend=EcosystemBackend.maven,
-                      fetch_url='')
-    rdb.add(maven)
-    rdb.commit()
-    return maven
+class TestDependencyParser(object):
+    @pytest.mark.parametrize('args, expected', [
+        (["name 1.0"],
+         [Dependency("name", [('>=', '1.0')])]),
+        (["name (1.0,)"],
+         [Dependency("name", [('>', '1.0')])]),
+        (["name [1.0]"],
+         [Dependency("name", [('==', '1.0')])]),
+        (["name (,1.0]"],
+         [Dependency("name", [('<=', '1.0')])]),
+        (["name (,1.0)"],
+         [Dependency("name", [('<', '1.0')])]),
+        (["name [1.0,2.0]"],
+         [Dependency("name", [[('>=', '1.0'), ('<=', '2.0')]])]),
+        (["name (1.0,2.0)"],
+         [Dependency("name", [[('>', '1.0'), ('<', '2.0')]])]),
+        (["name [1.0,2.0)"],
+         [Dependency("name", [[('>=', '1.0'), ('<', '2.0')]])]),
+        (["name (1.0)"],
+         []),
+    ])
+    def test_nuget_dependency_parser_parse(self, args, expected):
+        dep_parser = NugetDependencyParser()
+        if not expected:
+            with pytest.raises(ValueError):
+                dep_parser.parse(args)
+        else:
+            assert dep_parser.parse(args) == expected
 
+    @pytest.mark.parametrize('args, expected', [
+        (["github.com/gorilla/mux"],
+         [Dependency("github.com/gorilla/mux", "")]),
+        (["github.com/gorilla/mux 3f19343c7d9ce75569b952758bd236af94956061"],
+         [Dependency("github.com/gorilla/mux", "3f19343c7d9ce75569b952758bd236af94956061")])
+    ])
+    def test_golang_dependency_parser_parse(self, args, expected):
+        dep_parser = GolangDependencyParser()
+        assert dep_parser.parse(args) == expected
 
-@pytest.fixture
-def npm(rdb):
-    npm = Ecosystem(name='npm', backend=EcosystemBackend.npm,
-                    fetch_url='https://registry.npmjs.org/')
-    rdb.add(npm)
-    rdb.commit()
-    return npm
-
-
-@pytest.fixture
-def pypi(rdb):
-    pypi = Ecosystem(name='pypi', backend=EcosystemBackend.pypi,
-                     fetch_url='https://pypi.python.org/pypi')
-    rdb.add(pypi)
-    rdb.commit()
-    return pypi
-
-
-@pytest.fixture
-def rubygems(rdb):
-    rubygems = Ecosystem(name='rubygems', backend=EcosystemBackend.rubygems,
-                         fetch_url='https://rubygems.org/api/v1')
-    rdb.add(rubygems)
-    rdb.commit()
-    return rubygems
-
-
-class TestSolver(object):
     @pytest.mark.parametrize('args, expected', [
         (["name >0.6"],
          [Dependency("name", [('>=', '0.7.0')])]),
@@ -55,6 +59,14 @@ class TestSolver(object):
     ])
     def test_npm_dependency_parser_parse(self, args, expected):
         dep_parser = NpmDependencyParser()
+        assert dep_parser.parse(args) == expected
+
+    @pytest.mark.parametrize('args, expected', [
+        (["name <1.6.17 | (>=2.0.0 <2.0.2)"],
+         [Dependency("name", [('<', '1.6.17'), [('>=', '2.0.0'), ('<', '2.0.2')]])]),
+    ])
+    def test_oss_index_dependency_parser_parse(self, args, expected):
+        dep_parser = OSSIndexDependencyParser()
         assert dep_parser.parse(args) == expected
 
     @pytest.mark.parametrize('args, expected', [
@@ -77,7 +89,9 @@ class TestSolver(object):
          [Dependency("name", [('>=', '0.7.0')])]),
         ([Dependency("name", [('>=', '0.7.0'), ('>=', '0.8.0')])],
          [Dependency("name", [('>=', '0.8.0')])]),
-        ([Dependency("name", [('>=', '0.8.0')]), Dependency("name", [('>=', '0.13.0')]), Dependency("name", [('>=', '0.6.0')])],
+        ([Dependency("name", [('>=', '0.8.0')]),
+          Dependency("name", [('>=', '0.13.0')]),
+          Dependency("name", [('>=', '0.6.0')])],
          [Dependency("name", [('>=', '0.13.0')])]),
         ([Dependency("name", [('<', '1.7.0')]), Dependency("name", [('<', '1.8.0')])],
          [Dependency("name", [('<', '1.7.0')])]),
@@ -86,6 +100,20 @@ class TestSolver(object):
         dep_parser = NpmDependencyParser()
         assert dep_parser.restrict_versions(args) == expected
 
+    @pytest.mark.parametrize('args, expected', [
+        (["name == 1.0"],
+         [Dependency("name", [('==', '1.0')])]),
+        (["name >= 1.0, <2.0"],
+         [Dependency("name", [[('>=', '1.0'), ('<', '2.0')]])]),
+    ])
+    def test_pypi_dependency_parser_parse(self, args, expected):
+        dep_parser = PypiDependencyParser()
+        parsed = dep_parser.parse(args)
+        assert parsed[0].name == expected[0].name
+        assert set(parsed[0].spec[0]) == set(expected[0].spec[0])
+
+
+class TestSolver(object):
     SERVE_STATIC_VER = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4",
                         "1.1.0",
                         "1.2.0", "1.2.1", "1.2.2", "1.2.3",
@@ -144,24 +172,98 @@ class TestSolver(object):
         for name, version in solver_result.items():
             assert expected.get(name, '') == version
 
-    def test_pypi(self, pypi):
+    def test_pypi_solver(self, pypi):
         solver = get_ecosystem_solver(pypi)
-        deps = ["pymongo>=3.0,<3.2.2", "celery>3.1.11", "six==1.10.0"]
+        deps = ['django == 1.9.10',
+                'pymongo >=3.0, <3.2.2',
+                'six~=1.7.1',
+                'requests===2.16.2',
+                'click==0.*']
         out = solver.solve(deps)
+        assert out == {'django': '1.9.10',
+                       'pymongo': '3.2.1',
+                       'six': '1.7.3',
+                       'requests': '2.16.2',
+                       'click': '0.7'}
 
-        assert len(out) == len(deps)
-
-    def test_rubygems(self, rubygems):
+    def test_rubygems_solver(self, rubygems):
         solver = get_ecosystem_solver(rubygems)
-        deps = ["Hoe ~>3.14", "rexicaL >=1.0.5", "raKe-compiler-dock ~>0.4.2",
-                "rake-comPiler ~>0.9.2"]
+        deps = ['hoe <3.4.0',
+                'rake-compiler ~>0.9.2']
         out = solver.solve(deps)
+        assert out == {'hoe': '3.3.1',
+                       'rake-compiler': '0.9.9'}
 
-        assert len(out) == len(deps)
+    def test_nuget_solver(self, nuget):
+        solver = get_ecosystem_solver(nuget)
+        deps = ['jQuery [1.4.4, 1.6)',
+                'NUnit 3.2.1',
+                'NETStandard.Library [1.6.0, )']
+        out = solver.solve(deps)
+        # nuget resolves to lowest version by default, see
+        # https://docs.microsoft.com/en-us/nuget/release-notes/nuget-2.8#-dependencyversion-switch
+        assert out == {'jQuery': '1.4.4',
+                       'NUnit': '3.2.1',
+                       'NETStandard.Library': '1.6.0'}
 
-    def test_cucos_fetcher(self, rdb, npm):
+    @pytest.mark.parametrize('dependencies, expected', [
+        ([], {}),
+        (['github.com/msrb/mux'],
+         {'github.com/msrb/mux': 'bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'}),
+        (['github.com/msrb/mux bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'],
+         {'github.com/msrb/mux': 'bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'})
+    ])
+    def test_golang_solver(self, go, dependencies, expected):
+        solver = get_ecosystem_solver(go)
+        solver_result = solver.solve(dependencies)
+        assert len(solver_result) == len(dependencies)
+        for name, version in solver_result.items():
+            assert expected.get(name, '') == version, '"{}" "{}" "{}"'.format(
+                name, version, expected)
+
+
+class TestFetcher(object):
+    @pytest.mark.parametrize('package, expected', [
+        ('org.apache.flex.blazeds:flex-messaging-core',
+         {'4.7.0', '4.7.1', '4.7.2', '4.7.3'})
+    ])
+    def test_maven_fetcher(self, maven, package, expected):
+        f = MavenReleasesFetcher(maven)
+        _, releases = f.fetch_releases(package)
+        assert set(releases) >= expected
+
+    @pytest.mark.parametrize('package, expected', [
+        ('AjaxControlToolkit',
+         {'4.1.60919', '7.1005.0', '17.1.1'}),
+        ('Bootstrap',
+         {'2.3.2', '3.3.6', '4.0.0-alpha6'}),
+        ('log4net',
+         {'1.2.10', '2.0.3', '2.0.8'}),
+        ('Microsoft.AspNet.Mvc',
+         {'5.0.0', '5.2.0', '5.2.3'}),
+        ('NUnit',
+         {'2.6.4', '3.0.0', '3.7.1'}),
+        # Only one not sem-ver-compliant version
+        ('System.Data.SQLite',
+         {'1.0.105.2'})
+    ])
+    def test_nuget_fetcher(self, nuget, package, expected):
+        f = NugetReleasesFetcher(nuget)
+        _, releases = f.fetch_releases(package)
+        assert set(releases) >= expected
+
+    @pytest.mark.parametrize('package, expected', [
+        ('github.com/msrb/mux',
+         {'bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'})
+    ])
+    def test_golang_fetcher(self, go, package, expected):
+        f = GolangReleasesFetcher(go)
+        _, releases = f.fetch_releases(package)
+        assert set(releases) == expected
+
+    def test_f8a_fetcher(self, rdb, npm):
         # create initial dataset
-        package = Package(ecosystem=npm, name='cucos')
+        package = Package(ecosystem=npm, name='f8a')
         rdb.add(package)
         rdb.commit()
         versions = {'0.5.0', '0.5.1', '0.6.0', '0.6.4', '0.7.0', '0.8.0', '0.9.0', '1.0.0', '1.0.5'}
@@ -175,9 +277,9 @@ class TestSolver(object):
             rdb.add(analysis)
             rdb.commit()
 
-        f = CucosReleasesFetcher(npm, rdb)
+        f = F8aReleasesFetcher(npm, rdb)
 
-        r = f.fetch_releases('cucos')[1]
+        r = f.fetch_releases('f8a')[1]
 
         # make sure we fetched the same stuff we inserted
         assert set(r) == versions
@@ -186,12 +288,12 @@ class TestSolver(object):
         assert r.pop() == '1.0.5'
 
         # try different dependency specs
-        s = get_ecosystem_solver(npm, f)
-        assert s.solve(['cucos ^0.5.0'])['cucos'] == '0.5.1'
-        assert s.solve(['cucos 0.x.x'])['cucos'] == '0.9.0'
-        assert s.solve(['cucos >1.0.0'])['cucos'] == '1.0.5'
-        assert s.solve(['cucos ~>0.6.0'])['cucos'] == '0.6.4'
+        s = get_ecosystem_solver(npm, with_fetcher=f)
+        assert s.solve(['f8a ^0.5.0'])['f8a'] == '0.5.1'
+        assert s.solve(['f8a 0.x.x'])['f8a'] == '0.9.0'
+        assert s.solve(['f8a >1.0.0'])['f8a'] == '1.0.5'
+        assert s.solve(['f8a ~>0.6.0'])['f8a'] == '0.6.4'
 
         # check that with `all_versions` we return all the relevant ones
-        assert set(s.solve(['cucos >=0.6.0'], all_versions=True)['cucos']) == \
+        assert set(s.solve(['f8a >=0.6.0'], all_versions=True)['f8a']) == \
             (versions - {'0.5.0', '0.5.1'})

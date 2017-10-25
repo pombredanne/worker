@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
+from os.path import isfile
 import pytest
 from flexmock import flexmock
-from cucoslib.object_cache import EPVCache
-from cucoslib.enums import EcosystemBackend
-from cucoslib.workers import LinguistTask
-from cucoslib.models import Ecosystem
-from cucoslib.process import IndianaJones
+from f8a_worker.object_cache import EPVCache
+from f8a_worker.enums import EcosystemBackend
+from f8a_worker.workers import LinguistTask
+from f8a_worker.models import Ecosystem
+from f8a_worker.process import IndianaJones
 
 ECOSYSTEM = Ecosystem(name='pypi', backend=EcosystemBackend.pypi)
 MODULE_NAME = 'six'
@@ -14,6 +15,8 @@ MODULE_VERSION = '1.10.0'
 
 @pytest.mark.usefixtures("dispatcher_setup")
 class TestLinguist(object):
+    @pytest.mark.skipif(not isfile('/usr/local/bin/linguist'),
+                        reason="requires linguist")
     @pytest.mark.usefixtures("no_s3_connection")
     def test_execute(self, tmpdir):
         IndianaJones.fetch_artifact(

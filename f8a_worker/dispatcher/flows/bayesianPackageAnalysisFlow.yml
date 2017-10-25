@@ -1,0 +1,38 @@
+---
+  flow-definitions:
+    - &bayesianPackageAnalysisFlow
+      name: 'bayesianPackageAnalysisFlow'
+      queue: '{DEPLOYMENT_PREFIX}_{WORKER_ADMINISTRATION_REGION}_bayesianPackageAnalysisFlow_v0'
+      sampling:
+        name: 'constant'
+        args:
+          retry: 10
+      edges:
+        - from:
+          to: 'github_details'
+          condition: &isGhRepoCheck
+            name: 'isGhRepo'
+            args:
+              key: 'url'
+        - from:
+          to: 'GitReadmeCollectorTask'
+          condition:
+            <<: *isGhRepoCheck
+        - from:
+          to: 'RepositoryDescCollectorTask'
+          condition: &repositoryDescCollectorCheck
+            or:
+              - name: 'argsFieldEqual'
+                args:
+                  key: 'ecosystem'
+                  value: 'pypi'
+              - name: 'argsFieldEqual'
+                args:
+                  key: 'ecosystem'
+                  value: 'npm'
+        - from:
+          to: 'git_stats'
+          condition:
+            <<: *isGhRepoCheck
+        - from:
+          to: 'libraries_io'

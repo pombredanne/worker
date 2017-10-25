@@ -1,9 +1,8 @@
-FROM docker-registry.usersys.redhat.com/bayesian/cucos-worker
-MAINTAINER Slavek Kabrda <slavek@redhat.com>
+FROM  registry.devshift.net/bayesian/cucos-worker
 
 RUN pip3 install alembic
 
-RUN mkdir -p /cucoslib
-WORKDIR /cucoslib
+RUN mkdir -p /f8a_worker
+WORKDIR /f8a_worker
 
 ENTRYPOINT ["bash", "-c"]

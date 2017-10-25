@@ -1,0 +1,78 @@
+---
+  flow-definitions:
+    - &bayesianPackageFlow
+      name: 'bayesianPackageFlow'
+      queue: '{DEPLOYMENT_PREFIX}_ingestion_bayesianPackageFlow_v0'
+      propagate_node_args:
+        - 'bayesianPackageAnalysisFlow'
+        - 'bayesianPackageTaggingFlow'
+      node_args_from_first: true
+      nowait: 'PackageGraphImporterTask'
+      sampling:
+        name: 'constant'
+        args:
+          retry: 10
+      edges:
+        - from:
+          to: 'InitPackageFlow'
+        - from: 'InitPackageFlow'
+          to: 'bayesianPackageAnalysisFlow'
+          condition: &shouldSchedulePackageAnalysisCheck
+            name: 'fieldExist'
+            args:
+              key: 'document_id'
+        - from: 'bayesianPackageAnalysisFlow'
+          to: 'bayesianPackageTaggingFlow'
+          condition: &shouldSchedulePackageTaggingCheck
+            or:
+              - name: 'argsFieldEqual'
+                args:
+                  key: 'ecosystem'
+                  value: 'pypi'
+              - name: 'argsFieldEqual'
+                args:
+                  key: 'ecosystem'
+                  value: 'maven'
+        - from: 'bayesianPackageAnalysisFlow'
+          to: 'PackageFinalizeTask'
+          condition:
+            not:
+              <<: *shouldSchedulePackageTaggingCheck
+        - from: 'bayesianPackageTaggingFlow'
+          to: 'PackageFinalizeTask'
+        - from: 'PackageFinalizeTask'
+          to: 'PackageResultCollector'
+        - from: 'PackageResultCollector'
+          to: 'PackageGraphImporterTask'
+        - from: 'InitPackageFlow'
+          to: 'PackageGraphImporterTask'
+          condition:
+            and:
+              - not:
+                  <<: *shouldSchedulePackageAnalysisCheck
+              - name: 'argsFieldEqual'
+                args:
+                  key: 'force_graph_sync'
+                  value: true
+      failures:
+        - nodes: 'bayesianPackageAnalysisFlow'
+          fallback: 'bayesianPackageTaggingFlow'
+          # TODO: uncomment once https://github.com/selinon/selinon/pull/29 gets merged
+          #condition:
+          #  or:
+          #    - name: 'argsFieldEqual'
+          #      args:
+          #        key: 'ecosystem'
+          #        value: 'pypi'
+          #    - name: 'argsFieldEqual'
+          #      args:
+          #        key: 'ecosystem'
+          #        value: 'maven'
+
+    - <<: *bayesianPackageFlow
+      name: 'bayesianApiPackageFlow'
+      queue: '{DEPLOYMENT_PREFIX}_api_bayesianPackageFlow_v0'
+
+    - <<: *bayesianPackageFlow
+      name: 'bayesianPriorityPackageFlow'
+      queue: '{DEPLOYMENT_PREFIX}_priority_bayesianPackageFlow_v0'

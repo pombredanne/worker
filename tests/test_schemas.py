@@ -4,14 +4,15 @@ import os
 
 import pytest
 
-from cucoslib.schemas import (SchemaRef, SchemaLibrary,
-                              BundledSchemaLibrary,
-                              BundledDynamicSchemaLibrary,
-                              SchemaLookupError,
-                              SchemaModuleAttributeError,
-                              SchemaImportError,
-                              load_all_worker_schemas,
-                              assert_no_two_consecutive_schemas_are_same)
+from f8a_worker.schemas import (SchemaRef, SchemaLibrary,
+                                BundledSchemaLibrary,
+                                BundledDynamicSchemaLibrary,
+                                SchemaLookupError,
+                                SchemaModuleAttributeError,
+                                SchemaImportError,
+                                load_all_worker_schemas,
+                                assert_no_two_consecutive_schemas_are_same)
+
 
 @pytest.mark.offline
 class TestSchemaRef(object):
@@ -27,6 +28,7 @@ class TestSchemaRef(object):
     def test_next_model(self):
         schema_ref = SchemaRef("example", "1-0-0")
         assert schema_ref.next_model() == SchemaRef("example", "2-0-0")
+
 
 @pytest.mark.offline
 class TestSchemaLibrary(object):

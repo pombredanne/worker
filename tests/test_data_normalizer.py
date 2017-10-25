@@ -4,7 +4,7 @@ import os
 import pytest
 from os import path
 
-from cucoslib.data_normalizer import DataNormalizer
+from f8a_worker.data_normalizer import DataNormalizer
 
 
 def compare_dictionaries(a, b):
@@ -30,6 +30,29 @@ class TestDataNormalizer(object):
             return json.load(f)
 
     @pytest.mark.parametrize('args, expected', [
+        ({'keywords': None},
+         []),
+        ({'keywords': []},
+         []),
+        ({'keywords': ['x', 'y']},
+         ['x', 'y']),
+        ({'keywords': ''},
+         ['']),
+        ({'keywords': 'one'},
+         ['one']),
+        ({'keywords': 'one, two'},
+         ['one', 'two']),
+        ({'keywords': 'one two'},
+         ['one', 'two']),
+        ({'keywords': 'one two', 'separator': ' '},
+         ['one', 'two']),
+        ({'keywords': 'one, two', 'separator': ','},
+         ['one', 'two']),
+    ])
+    def test__split_keywords(self, args, expected):
+        assert self._dataNormalizer._split_keywords(**args) == expected
+
+    @pytest.mark.parametrize('args, expected', [
         # pick one key which IS there
         ({'data': {'author': 'me', 'version': '0.1.2'}, 'keymap': (('author',),)},
          {'author': 'me'}),
@@ -49,8 +72,8 @@ class TestDataNormalizer(object):
         ({'data': {'licenses': ['MIT', 'BSD']}, 'keymap': ((('license', 'licenses',),),)},
          {'licenses': ['MIT', 'BSD']}),
         # pick one of keys and rename it
-        ({'data': {'license': 'MIT'}, 'keymap': ((('license', 'licenses',), 'declared_license'),)},
-         {'declared_license': 'MIT'}),
+        ({'data': {'license': 'MIT'}, 'keymap': ((('license', 'licenses',), 'declared_licenses'),)},
+         {'declared_licenses': 'MIT'}),
     ])
     def test__transform_keys(self, args, expected):
         assert self._dataNormalizer.transform_keys(**args) == expected
@@ -62,9 +85,11 @@ class TestDataNormalizer(object):
          "A"),
         ({'name_email_dict': {'email': 'B@C.com'}},
          "<B@C.com>"),
-        ({'name_email_dict': {'author': 'A', 'author-email': 'B@C.com'}, 'name_key': 'author', 'email_key': 'author-email'},
+        ({'name_email_dict': {'author': 'A', 'author-email': 'B@C.com'},
+          'name_key': 'author', 'email_key': 'author-email'},
          "A <B@C.com>"),
-        ({'name_email_dict': {'url': 'https://github.com/o/p/issues', 'email': 'project@name.com'}, 'name_key': 'url'},
+        ({'name_email_dict': {'url': 'https://github.com/o/p/issues', 'email': 'project@name.com'},
+          'name_key': 'url'},
          "https://github.com/o/p/issues <project@name.com>"),
     ])
     def test__join_name_email(self, args, expected):
@@ -117,7 +142,8 @@ class TestDataNormalizer(object):
 
     @pytest.mark.parametrize('args, expected', [
         # correct
-        ({'data': {'required_rubygem_version': {"requirements": [[">=", {"version": "1.9.2"}]]}}, 'key': 'required_rubygem_version'},
+        ({'data': {'required_rubygem_version': {"requirements": [[">=", {"version": "1.9.2"}]]}},
+          'key': 'required_rubygem_version'},
          '>=1.9.2'),
         # bad
         ({'data': {'required_ruby_version': {"requirement": [[">=", {"version": "1.9.2"}]]}},
@@ -145,19 +171,19 @@ class TestDataNormalizer(object):
         ({'bugs': {'url': 'https://github.com/owner/project/issues', 'email': 'project@name.com'}},
          {'bug_reporting': 'https://github.com/owner/project/issues <project@name.com>'}),
         ({'license': 'BSD-3-Clause'},
-         {'declared_license': 'BSD-3-Clause'}),
+         {'declared_licenses': ['BSD-3-Clause']}),
         ({'license': '(ISC OR GPL-3.0)'},
-         {'declared_license': '(ISC OR GPL-3.0)'}),
+         {'declared_licenses': ['ISC', 'GPL-3.0']}),
         # deprecated, but used in older packages
         ({'license': {'type': 'ISC',
                       'url': 'http://opensource.org/licenses/ISC'}},
-         {'declared_license': 'ISC'}),
+         {'declared_licenses': ['ISC']}),
         # deprecated, but used in older packages
         ({'licenses': [{'type': 'MIT',
                         'url': 'http://www.opensource.org/licenses/mit-license.php'},
                        {'type': 'Apache-2.0',
                         'url': 'http://opensource.org/licenses/apache2.0.php'}]},
-         {'declared_license': 'MIT, Apache-2.0'}),
+         {'declared_licenses': ['MIT', 'Apache-2.0']}),
         ({'repository': {'type': 'git', 'url': 'https://github.com/npm/npm.git'}},
          {'code_repository': {'type': 'git', 'url': 'https://github.com/npm/npm.git'}}),
         ({'repository': 'expressjs/express'},
@@ -181,6 +207,16 @@ class TestDataNormalizer(object):
         data = self._load_json('npm-with-shrinkwrap-json-from-mercator')
         expected = self._load_json('npm-with-shrinkwrap-json-expected')
         assert compare_dictionaries(self._dataNormalizer.handle_data(data), expected)
+
+    def test_transforming_java(self):
+        data = self._load_json('pom-xml-from-mercator')
+        expected = self._load_json('pom-xml-expected')
+        assert compare_dictionaries(self._dataNormalizer.handle_data(data['items'][0]), expected)
+
+    def test_transforming_nuspec(self):
+        data = self._load_json('nuspec-from-mercator')
+        expected = self._load_json('nuspec-expected')
+        assert compare_dictionaries(self._dataNormalizer.handle_data(data['items'][0]), expected)
 
     @pytest.mark.parametrize('transformed_data, expected', [
         ({'dependencies': ["escape-html 1.0.1"]},
@@ -213,7 +249,7 @@ class TestDataNormalizer(object):
         result = self.sort_by_path(self._dataNormalizer.get_outermost_items(d))
         assert len(result) == len(expected)
         for i in range(len(expected)):
-            assert compare_dictionaries(result[i], expected[i]) == True
+            assert compare_dictionaries(result[i], expected[i])
 
     @pytest.mark.parametrize('data, expected', [
         ({'pom.xml': {'dependencies': {'compile': {'g:a::': '1.0'}}}},
@@ -230,18 +266,42 @@ class TestDataNormalizer(object):
                                        'provided': {'p:p::': '1000'}}}},
          {'dependencies': sorted(['g:a 1.0', 'g2:a2 1.0.3-SNAPSHOT', 'r:r version', 'p:p 1000']),
           'devel_dependencies': sorted(['t:t 0'])}),
-        ({'pom.xml': {'scm_url': 'git@github.com:redhat-developer/Bayesian.git'}},
-         {'code_repository': {'url': 'git@github.com:redhat-developer/Bayesian.git', 'type': 'unknown'}}),
+        ({'pom.xml': {'scm_url': 'git@github.com:fabric8-analytics/fabric8-analytics-worker.git'}},
+         {'code_repository': {'url':
+                              'git@github.com:fabric8-analytics/fabric8-analytics-worker.git',
+                              'type': 'git'}}),
         ({'pom.xml': {'licenses': ['ASL 2.0', 'MIT']}},
-         {'declared_license': 'ASL 2.0, MIT'}),
+         {'declared_licenses': ['ASL 2.0', 'MIT']}),
         ({'pom.xml': {'description': 'Ich bin ein Bayesianer'}},
          {'description': 'Ich bin ein Bayesianer'}),
-        ({'pom.xml': {'url': 'https://github.com/redhat-developer/Bayesian'}},
-         {'homepage': 'https://github.com/redhat-developer/Bayesian'}),
+        ({'pom.xml': {'url': 'https://github.com/fabric8-analytics/fabric8-analytics-worker'}},
+         {'homepage': 'https://github.com/fabric8-analytics/fabric8-analytics-worker'}),
     ])
     def test_transforming_java_data(self, data, expected):
         transformed_data = self._dataNormalizer._handle_java(data)
         for key, value in expected.items():
             assert key in transformed_data
-            transformed_value = sorted(transformed_data[key]) if isinstance(transformed_data[key], list) else transformed_data[key]
+            transformed_value = sorted(transformed_data[key]) \
+                if isinstance(transformed_data[key], list) else transformed_data[key]
             assert transformed_value == value
+
+    @pytest.mark.parametrize('data, expected', [
+        ({'ecosystem': 'gofedlib', 'result': {
+            'deps-main': [],
+            'deps-packages': ['https://github.com/gorilla/context']}},
+         {'ecosystem': 'gofedlib', 'dependencies': ['github.com/gorilla/context']}),
+        ({'ecosystem': 'gofedlib',
+          'result': {'deps-main': ['https://github.com/gorilla/sessions',
+                                   'https://github.com/gorilla/context'],
+                     'deps-packages': ['https://github.com/gorilla/context']}},
+         {'ecosystem': 'gofedlib', 'dependencies': ['github.com/gorilla/context',
+                                                    'github.com/gorilla/sessions']}),
+    ])
+    def test_transforming_gofedlib_data(self, data, expected):
+        transformed_data = self._dataNormalizer.handle_data(data)
+        for key, value in expected.items():
+            assert key in transformed_data
+            actual_value = transformed_data[key]
+            if isinstance(actual_value, list):
+                actual_value.sort()
+            assert actual_value == value

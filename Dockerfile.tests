@@ -1,18 +1,13 @@
-FROM docker-registry.usersys.redhat.com/bayesian/cucos-worker
-MAINTAINER Tomas Tomecek <ttomecek@redhat.com>
+FROM registry.devshift.net/bayesian/cucos-worker
 
 ENV PYTHONDONTWRITEBYTECODE 1
 
-COPY . /cucoslib
-WORKDIR /cucoslib
+COPY . /f8a_worker
+WORKDIR /f8a_worker
 RUN cd tests && pip3 install -r ./requirements.txt
 
-# Install cucos-license-check prerelease if present in lib dir
-RUN ls cucos-license-check-unreleased.rpm && \
-    dnf install -y cucos-license-check-unreleased.rpm; \
-    exit 0 # We expect the initial `ls` may fail
-
-RUN useradd -o -u 1000 -G mock cucos
-USER cucos
+RUN yum install -y --setopt=tsflags=nodocs mock && yum clean all && \
+    useradd -o -u 1000 -G mock f8a
+USER f8a
 
 CMD ["py.test"]

@@ -1,6 +1,7 @@
 #!/bin/bash
 
-export CCS_POSTGRES=postgresql://${POSTGRESQL_USER}:${POSTGRESQL_PASSWORD}@${PGBOUNCER_SERVICE_HOST:-coreapi-pgbouncer}:${PGBOUNCER_SERVICE_PORT:-5432}/${POSTGRESQL_DATABASE}
+# UNQUOTED password is expected here. Fails otherwise
+export F8A_POSTGRES=$(python3 -c 'from f8a_worker.defaults import configuration; print(configuration.UNQUOTED_POSTGRES_CONNECTION)')
 
 set -ex
 

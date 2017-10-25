@@ -8,11 +8,11 @@ def get_requirements():
 
 
 setup(
-    name='cucoslib',
+    name='f8a_worker',
     version='0.2',
     scripts=[
-        'hack/env.sh',
         'hack/workers.sh',
+        'hack/queue_conf.py',
         'hack/worker-liveness.sh',
         'hack/worker-readiness.sh'
     ],
@@ -21,8 +21,8 @@ setup(
     install_requires=get_requirements(),
     author='Pavel Odvody',
     author_email='podvody@redhat.com',
-    description='Bayesian workers & utilities',
-    license='MIT',
-    keywords='bayesian analysis worker',
-    url='https://github.com/baytemp/worker'
+    description='fabric8-analytics workers & utilities',
+    license='GPLv3',
+    keywords='fabric8-analytics analysis worker',
+    url='https://github.com/fabric8-analytics/fabric8-analytics-worker'
 )

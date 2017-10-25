@@ -13,26 +13,20 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 Base = declarative_base()
 
-from cucoslib.conf import get_configuration, get_postgres_connection_string
-from cucoslib.enums import EcosystemBackend
-from cucoslib.errors import TaskError
-from cucoslib.models import (Analysis, Ecosystem, Package, Version, create_db_scoped_session)
-from cucoslib import utils # so that we can mock functions from here
-from cucoslib.utils import (get_all_files_from,
-                            hidden_path_filter,
-                            skip_git_files,
-                            ThreadPool,
-                            MavenCoordinates,
-                            mvn_find_latest_version,
-                            compute_digest,
-                            get_latest_upstream_details,
-                            safe_get_latest_version,
-                            DownstreamMapCache,
-                            parse_gh_repo)
-
-from .conftest import rdb
-
-configuration = get_configuration()
+from f8a_worker.defaults import configuration
+from f8a_worker.errors import TaskError
+from f8a_worker import utils  # so that we can mock functions from here
+from f8a_worker.utils import (get_all_files_from,
+                              hidden_path_filter,
+                              skip_git_files,
+                              ThreadPool,
+                              MavenCoordinates,
+                              compute_digest,
+                              get_latest_upstream_details,
+                              safe_get_latest_version,
+                              DownstreamMapCache,
+                              parse_gh_repo,
+                              url2git_repo)
 
 
 class TestUtilFunctions(object):
@@ -82,12 +76,6 @@ class TestUtilFunctions(object):
         assert set(get_all_files_from(test_dir, path_filter=hidden_path_filter)) == \
             set(itertools.chain(py_files, test_files))
 
-    def test_mvn_find_latest_version(self):
-        repo_url = os.path.join(os.path.dirname(__file__), 'data/maven/')
-        a = MavenCoordinates('org.junit', 'junit')
-        latest = mvn_find_latest_version(repo_url, a)
-        assert latest == '4.12'
-
     def test_compute_digest(self):
         assert compute_digest("/etc/os-release")
         with pytest.raises(TaskError):
@@ -125,27 +113,41 @@ class TestThreadPool(object):
 
 
 example_coordinates = [
-        # MavenCoordinates(), from_str, is_from_str_ok, to_str, to_str(omit_version=True), to_repo_url
+        # MavenCoordinates(), from_str, is_from_str_ok, to_str,
+        # to_str(omit_version=True), to_repo_url
         (MavenCoordinates('g', 'a'), 'g:a', True, 'g:a', 'g:a', None),
         (MavenCoordinates('g', 'a', '1'), 'g:a:1', True, 'g:a:1', 'g:a', 'g/a/1/a-1.jar'),
-        (MavenCoordinates('g', 'a', packaging='war'), 'g:a:war:', True, 'g:a:war:', 'g:a:war:', None),
-        (MavenCoordinates('g', 'a', '1', packaging='war'), ['g:a:war:1', 'g:a:war::1'], True, 'g:a:war:1', 'g:a:war:', 'g/a/1/a-1.war'),
-        (MavenCoordinates('g', 'a', classifier='sources'), 'g:a::sources:', True, 'g:a::sources:', 'g:a::sources:', None),
-        (MavenCoordinates('g', 'a', '1', classifier='sources'), 'g:a::sources:1', True, 'g:a::sources:1', 'g:a::sources:', 'g/a/1/a-1-sources.jar'),
-        (MavenCoordinates('g', 'a', packaging='war', classifier='sources'), 'g:a:war:sources:', True, 'g:a:war:sources:', 'g:a:war:sources:', None),
-        (MavenCoordinates('g', 'a', '1', packaging='war', classifier='sources'), 'g:a:war:sources:1', True, 'g:a:war:sources:1', 'g:a:war:sources:', 'g/a/1/a-1-sources.war'),
-        (MavenCoordinates('org.fedoraproject', 'test-artifact', '1.0-beta1'), 'org.fedoraproject:test-artifact:1.0-beta1', True, 'org.fedoraproject:test-artifact:1.0-beta1', 'org.fedoraproject:test-artifact', 'org/fedoraproject/test-artifact/1.0-beta1/test-artifact-1.0-beta1.jar'),
+        (MavenCoordinates('g', 'a', packaging='war'), 'g:a:war:', True, 'g:a:war:', 'g:a:war:',
+            None),
+        (MavenCoordinates('g', 'a', '1', packaging='war'), ['g:a:war:1', 'g:a:war::1'], True,
+            'g:a:war:1', 'g:a:war:', 'g/a/1/a-1.war'),
+        (MavenCoordinates('g', 'a', classifier='sources'), 'g:a::sources:', True, 'g:a::sources:',
+            'g:a::sources:', None),
+        (MavenCoordinates('g', 'a', '1', classifier='sources'), 'g:a::sources:1', True,
+            'g:a::sources:1', 'g:a::sources:', 'g/a/1/a-1-sources.jar'),
+        (MavenCoordinates('g', 'a', packaging='war', classifier='sources'), 'g:a:war:sources:',
+            True, 'g:a:war:sources:', 'g:a:war:sources:', None),
+        (MavenCoordinates('g', 'a', '1', packaging='war', classifier='sources'),
+            'g:a:war:sources:1', True, 'g:a:war:sources:1', 'g:a:war:sources:',
+            'g/a/1/a-1-sources.war'),
+        (MavenCoordinates('org.fedoraproject', 'test-artifact', '1.0-beta1'),
+            'org.fedoraproject:test-artifact:1.0-beta1', True,
+            'org.fedoraproject:test-artifact:1.0-beta1', 'org.fedoraproject:test-artifact',
+            'org/fedoraproject/test-artifact/1.0-beta1/test-artifact-1.0-beta1.jar'),
         # No colon in from_str
         (MavenCoordinates('g', 'a', '1'), 'ga1', False, None, None, None),
         # Too many colons in from_str
-        (MavenCoordinates('g', 'a', '1', packaging='war', classifier='sources'), 'g:a:war:sources:1:', False, None, None, None),
+        (MavenCoordinates('g', 'a', '1', packaging='war', classifier='sources'),
+            'g:a:war:sources:1:', False, None, None, None),
     ]
 
 
 class TestMavenCoordinates(object):
-    @pytest.mark.parametrize(('coords', 'from_str', 'is_from_str_ok', 'to_str', 'to_str_omit_version', 'to_repo_url'),
+    @pytest.mark.parametrize(('coords', 'from_str', 'is_from_str_ok', 'to_str',
+                              'to_str_omit_version', 'to_repo_url'),
                              example_coordinates)
-    def test_from_str(self, coords, from_str, is_from_str_ok, to_str, to_str_omit_version, to_repo_url):
+    def test_from_str(self, coords, from_str, is_from_str_ok, to_str, to_str_omit_version,
+                      to_repo_url):
         from_strings = from_str if isinstance(from_str, list) else [from_str]
         for fstr in from_strings:
             if is_from_str_ok:
@@ -154,17 +156,19 @@ class TestMavenCoordinates(object):
                 with pytest.raises(ValueError):
                     MavenCoordinates.from_str(fstr)
 
-    @pytest.mark.parametrize(('coords', 'from_str', 'is_from_str_ok', 'to_str', 'to_str_omit_version', 'to_repo_url'),
-                             example_coordinates)
-    def test_to_str(self, coords, from_str, is_from_str_ok, to_str, to_str_omit_version, to_repo_url):
+    @pytest.mark.parametrize(('coords', 'from_str', 'is_from_str_ok', 'to_str',
+                             'to_str_omit_version', 'to_repo_url'), example_coordinates)
+    def test_to_str(self, coords, from_str, is_from_str_ok, to_str, to_str_omit_version,
+                    to_repo_url):
         if to_str:
             assert coords.to_str() == to_str
         if to_str_omit_version:
             assert coords.to_str(omit_version=True) == to_str_omit_version
 
-    @pytest.mark.parametrize(('coords', 'from_str', 'is_from_str_ok', 'to_str', 'to_str_omit_version', 'to_repo_url'),
-                             example_coordinates)
-    def test_to_repo_url(self, coords, from_str, is_from_str_ok, to_str, to_str_omit_version, to_repo_url):
+    @pytest.mark.parametrize(('coords', 'from_str', 'is_from_str_ok', 'to_str',
+                              'to_str_omit_version', 'to_repo_url'), example_coordinates)
+    def test_to_repo_url(self, coords, from_str, is_from_str_ok, to_str, to_str_omit_version,
+                         to_repo_url):
         if to_repo_url:
             assert coords.to_repo_url() == to_repo_url
 
@@ -173,14 +177,14 @@ class TestGetAnityaProject(object):
     def test_basic(self):
         resp = flexmock(json=lambda: {'a': 'b'},
                         raise_for_status=lambda: None)
-        url = configuration.anitya_url + '/api/by_ecosystem/foo/bar'
+        url = configuration.ANITYA_URL + '/api/by_ecosystem/foo/bar'
         flexmock(requests).should_receive('get').with_args(url).and_return(resp)
         assert get_latest_upstream_details('foo', 'bar') == {'a': 'b'}
 
     def test_bad_status(self):
         resp = flexmock(json=lambda: {'a': 'b'})
         resp.should_receive('raise_for_status').and_raise(Exception())
-        url = configuration.anitya_url + '/api/by_ecosystem/foo/bar'
+        url = configuration.ANITYA_URL + '/api/by_ecosystem/foo/bar'
         flexmock(requests).should_receive('get').with_args(url).and_return(resp)
         with pytest.raises(Exception):
             get_latest_upstream_details('foo', 'bar')
@@ -209,8 +213,7 @@ class TestDownstreamMapCache(object):
             key = Column(String(255), primary_key=True)
             value = Column(String(512), nullable=False)
 
-        connection_string = get_postgres_connection_string()
-        engine = create_engine(connection_string)
+        engine = create_engine(configuration.POSTGRES_CONNECTION)
         session = sessionmaker(bind=engine)()
         Base.metadata.create_all(engine)
         r = DownstreamMapCache(session)
@@ -252,3 +255,21 @@ class TestParseGHRepo:
     ])
     def test_parse_gh_repo_nok(self, url):
         assert parse_gh_repo(url) is None
+
+
+class TestUrl2GitRepo(object):
+    @pytest.mark.parametrize('url,expected_result', [
+        ('git@github.com:foo/bar', 'https://github.com/foo/bar'),
+        ('git@github.com:foo/bar.git', 'https://github.com/foo/bar.git'),
+        ('https://github.com/foo/bar.git', 'https://github.com/foo/bar.git'),
+        ('git+https://github.com/foo/bar.git', 'https://github.com/foo/bar.git')
+    ])
+    def test_url2git_repo_ok(self, url, expected_result):
+        assert url2git_repo(url) == expected_result
+
+    @pytest.mark.parametrize('url', [
+        'git@github.com/foo/bar'
+    ])
+    def test_url2git_repo_nok(self, url):
+        with pytest.raises(ValueError):
+            url2git_repo(url)

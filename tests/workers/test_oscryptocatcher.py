@@ -4,12 +4,14 @@ import os
 import sys
 import pytest
 from flexmock import flexmock
-from cucoslib.workers import OSCryptoCatcherTask
-from cucoslib.object_cache import EPVCache
+from f8a_worker.workers import OSCryptoCatcherTask
+from f8a_worker.object_cache import EPVCache
 
 
 @pytest.mark.usefixtures("dispatcher_setup")
 class TestOSCryptoCatcher(object):
+    @pytest.mark.skipif(not os.path.isfile('/usr/bin/oscryptocatcher'),
+                        reason="requires oscryptocatcher")
     @pytest.mark.usefixtures("no_s3_connection")
     def test_ssl_py(self):
         path = sys.modules['ssl'].__file__  # /usr/lib64/python2.7/ssl.pyc

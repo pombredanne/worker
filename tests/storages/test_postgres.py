@@ -5,13 +5,14 @@ import pytest
 import selinon
 from sqlalchemy.exc import IntegrityError
 
-from cucoslib.conf import get_postgres_connection_string
-from cucoslib.enums import EcosystemBackend
-from cucoslib.models import (Ecosystem, Package, Version, Analysis, WorkerResult,
-                             create_db_scoped_session)
-from cucoslib.storages.postgres import BayesianPostgres
+from f8a_worker.defaults import configuration
+from f8a_worker.enums import EcosystemBackend
+from f8a_worker.models import (Ecosystem, Package, Version, Analysis, WorkerResult,
+                               create_db_scoped_session)
+from f8a_worker.storages.postgres import BayesianPostgres
 
 from ..conftest import rdb
+
 
 class TestBayesianPostgres:
     def setup_method(self, method):
@@ -30,7 +31,7 @@ class TestBayesianPostgres:
         self.s.add(self.a2)
         self.s.commit()
 
-        self.bp = BayesianPostgres(connection_string=get_postgres_connection_string())
+        self.bp = BayesianPostgres(connection_string=configuration.POSTGRES_CONNECTION)
 
     def test_retrieve_normal(self):
         wid = 'x'
@@ -88,7 +89,21 @@ class TestBayesianPostgres:
         res['later'] = 'aligator'
         self.bp.store(node_args={'document_id': self.a2.id},
                       flow_name='blah', task_name=tn, task_id=tid + '2', result=res)
-        assert self.bp.get_latest_task_result(self.en, self.pn, self.vi, tn).task_result == res
+        assert self.bp.get_latest_task_result(self.en, self.pn, self.vi, tn) == res
+
+    # TODO: This needs to be run against PackagePostgres, not BayesianPostgres
+    # def test_get_latest_task_entry(self):
+    #     tn = 'asd'
+    #     tid = 'sdf'
+    #     res = {'some': 'thing'}
+    #     self.bp.store(node_args={'document_id': self.a.id},
+    #                   flow_name='blah', task_name=tn, task_id=tid, result=res)
+    #     res['later'] = 'aligator'
+    #     self.bp.store(node_args={'document_id': self.a2.id},
+    #                   flow_name='blah', task_name=tn, task_id=tid + '2', result=res)
+    #     assert self.bp.get_latest_task_entry(self.en, self.pn, tn).task_result == res
+    #     assert self.bp.get_latest_task_entry(self.en, self.pn, tn).worker_id == tid
+    #     assert self.bp.get_latest_task_entry(self.en, self.pn, tn).worker == tn
 
     def test_get_latest_task_result_no_results(self):
         assert self.bp.get_latest_task_result(self.en, self.pn, self.vi, 'asd') is None

@@ -3,8 +3,8 @@
 import os
 import pytest
 from flexmock import flexmock
-from cucoslib.object_cache import EPVCache
-from cucoslib.workers import BinwalkTask
+from f8a_worker.object_cache import EPVCache
+from f8a_worker.workers import BinwalkTask
 
 
 def is_executable(fpath):
@@ -13,6 +13,8 @@ def is_executable(fpath):
 
 @pytest.mark.usefixtures("dispatcher_setup")
 class TestBinwalk(object):
+    @pytest.mark.skipif(not os.path.isfile('/usr/bin/binwalk'),
+                        reason="requires binwalk")
     @pytest.mark.usefixtures("no_s3_connection")
     def test_execute(self):
         path = os.path.join(

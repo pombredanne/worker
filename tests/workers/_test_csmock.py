@@ -5,7 +5,7 @@ import pytest
 import flexmock
 import requests
 
-from cucoslib.workers import csmock_worker
+from f8a_worker.workers import csmock_worker
 
 
 dummy_package_dir = os.path.abspath(os.path.join(
@@ -51,7 +51,8 @@ def test_offline_csmock_tool():
 
 
 def test_csmock_worker(tmpdir):
-    six_tb_url = "https://pypi.python.org/packages/b3/b2/238e2590826bfdd113244a40d9d3eb26918bd798fc187e2360a8367068db/six-1.10.0.tar.gz"
+    six_tb_url = "https://pypi.python.org/packages/b3/b2/" + \
+        "238e2590826bfdd113244a40d9d3eb26918bd798fc187e2360a8367068db/six-1.10.0.tar.gz"
     tb_path = os.path.join(str(tmpdir), "six-1.10.0.tar.gz")
     r = requests.get(six_tb_url, stream=True)
     if r.status_code == 200:
