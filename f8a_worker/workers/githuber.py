@@ -1,72 +1,66 @@
-from bs4 import BeautifulSoup
-import requests
-import github
-import random
-import time
-from collections import OrderedDict
+"""Collects statistics using Github API."""
 
-from f8a_worker.schemas import SchemaRef
+from urllib.parse import urljoin
+
+import requests
+from collections import OrderedDict
+from selinon import FatalTaskError
+
 from f8a_worker.base import BaseTask
-from f8a_worker.utils import parse_gh_repo
+from f8a_worker.errors import F8AConfigurationException, NotABugTaskError, NotABugFatalTaskError
+from f8a_worker.schemas import SchemaRef
+from f8a_worker.utils import parse_gh_repo, get_response
 
 REPO_PROPS = ('forks_count', 'subscribers_count', 'stargazers_count', 'open_issues_count')
 
 
 class GithubTask(BaseTask):
-    """ Collects statistics using Github API """
+    """Collects statistics using Github API."""
+
     _analysis_name = "github_details"
-    schema_ref = SchemaRef(_analysis_name, '1-0-4')
+    schema_ref = SchemaRef(_analysis_name, '2-0-1')
     # used for testing
     _repo_name = None
     _repo_url = None
 
+    _headers = {
+        'Accept': 'application/vnd.github.mercy-preview+json, '  # for topics
+                  'application/vnd.github.v3+json'  # recommended by GitHub for License API
+    }
+
     @classmethod
     def create_test_instance(cls, repo_name, repo_url):
+        """Create instance of task for tests."""
+        assert cls
         instance = super().create_test_instance()
         # set for testing as we are not querying DB for mercator results
         instance._repo_name = repo_name
         instance._repo_url = repo_url
         return instance
 
-    @staticmethod
-    def _retry_no_cached(call, sleep_time=2, retry_count=10):
-        """ Deal with cached results from GitHub as PyGitHub does not check this
-
-        https://developer.github.com/v3/repos/statistics/#a-word-about-caching
-        """
-        result = None
-
-        for _ in range(retry_count):
-            result = call()
-            if result:
-                break
-            time.sleep(sleep_time)
-
-        return result
-
-    @classmethod
-    def _get_last_years_commits(cls, repo):
-        activity = cls._retry_no_cached(repo.get_stats_commit_activity)
-        if not activity:
+    def _get_last_years_commits(self, repo_url):
+        """Get weekly commit activity for last year."""
+        try:
+            activity = get_response(urljoin(repo_url + '/', "stats/commit_activity"), self._headers)
+        except NotABugTaskError as e:
+            self.log.debug(e)
             return []
-        return [x.total for x in activity]
+        return [x['total'] for x in activity]
 
-    @staticmethod
-    def _rate_limit_exceeded(gh):
-        return gh.rate_limiting[0] == 0
-
-    @classmethod
-    def _get_repo_stats(cls, repo):
-        # len(list()) is workaround for totalCount being None
-        # https://github.com/PyGithub/PyGithub/issues/415
-        contributors = cls._retry_no_cached(repo.get_contributors)
+    def _get_repo_stats(self, repo):
+        """Collect various repository properties."""
+        try:
+            contributors = get_response(repo['contributors_url'], self._headers)
+        except NotABugTaskError as e:
+            self.log.debug(e)
+            contributors = {}
         d = {'contributors_count': len(list(contributors)) if contributors is not None else 'N/A'}
         for prop in REPO_PROPS:
-            d[prop] = repo.raw_data.get(prop, -1)
+            d[prop] = repo.get(prop, -1)
         return d
 
     def _get_repo_name(self, url):
-        """Retrieve GitHub repo from a preceding Mercator scan"""
+        """Retrieve GitHub repo from a preceding Mercator scan."""
         parsed = parse_gh_repo(url)
         if not parsed:
             self.log.debug('Could not parse Github repo URL %s', url)
@@ -74,20 +68,12 @@ class GithubTask(BaseTask):
             self._repo_url = 'https://github.com/' + parsed
         return parsed
 
-    def _get_topics(self):
-        if not self._repo_url:
-            return []
-
-        pop = requests.get('{url}'.format(url=self._repo_url))
-        poppage = BeautifulSoup(pop.text, 'html.parser')
-
-        topics = []
-        for link in poppage.find_all("a", class_="topic-tag"):
-            topics.append(link.text.strip())
-
-        return topics
-
     def execute(self, arguments):
+        """Task code.
+
+        :param arguments: dictionary with task arguments
+        :return: {}, results
+        """
         result_data = {'status': 'unknown',
                        'summary': [],
                        'details': {}}
@@ -99,41 +85,33 @@ class GithubTask(BaseTask):
                 # Not a GitHub hosted project
                 return result_data
 
-        token = self.configuration.GITHUB_TOKEN
-        if not token:
-            if self._rate_limit_exceeded(github.Github()):
-                self.log.error("No Github API token provided (GITHUB_TOKEN env variable), "
-                               "and rate limit exceeded! "
-                               "Ending now to not wait endlessly")
-                result_data['status'] = 'error'
-                return result_data
-            else:
-                self.log.warning("No Github API token provided (GITHUB_TOKEN env variable), "
-                                 "requests will be unauthenticated, "
-                                 "i.e. limited to 60 per hour")
-        else:
-            # there might be more comma-separated tokens, randomly select one
-            token = random.choice(token.split(',')).strip()
-
-        gh = github.Github(login_or_token=token)
         try:
-            repo = gh.get_repo(full_name_or_id=self._repo_name, lazy=False)
-        except github.GithubException:
-            self.log.error("Failed to get repo %s" % self._repo_name)
-            result_data['status'] = 'error'
-            return result_data
+            _, header = self.configuration.select_random_github_token()
+            self._headers.update(header)
+        except F8AConfigurationException as e:
+            self.log.error(e)
+            raise FatalTaskError from e
+
+        repo_url = urljoin(self.configuration.GITHUB_API + "repos/", self._repo_name)
+        try:
+            repo = get_response(repo_url, self._headers)
+        except NotABugTaskError as e:
+            self.log.error(e)
+            raise NotABugFatalTaskError from e
 
         result_data['status'] = 'success'
 
         issues = {}
         # Get Repo Statistics
         notoriety = self._get_repo_stats(repo)
+
         if notoriety:
             issues.update(notoriety)
-        issues['topics'] = self._get_topics()
+        issues['topics'] = repo.get('topics', [])
+        issues['license'] = repo.get('license') or {}
 
         # Get Commit Statistics
-        last_year_commits = self._get_last_years_commits(repo)
+        last_year_commits = self._get_last_years_commits(repo['url'])
         commits = {'last_year_commits': {'sum': sum(last_year_commits),
                                          'weekly': last_year_commits}}
         issues.update(commits)
@@ -142,7 +120,7 @@ class GithubTask(BaseTask):
 
 
 class GitReadmeCollectorTask(BaseTask):
-    """ Store README files stored on Github """
+    """Collect README files stored on Github."""
 
     _GITHUB_README_PATH = \
         'https://raw.githubusercontent.com/{project}/{repo}/master/README{extension}'
@@ -164,6 +142,7 @@ class GitReadmeCollectorTask(BaseTask):
     ))
 
     def _get_github_readme(self, url):
+        """Get README from url."""
         repo_tuple = parse_gh_repo(url)
         if repo_tuple:
             project, repo = repo_tuple.split('/')
@@ -186,6 +165,7 @@ class GitReadmeCollectorTask(BaseTask):
                 return {'type': readme_type, 'content': response.text}
 
     def run(self, arguments):
+        """Task's entrypoint."""
         self._strict_assert(arguments.get('name'))
         self._strict_assert(arguments.get('ecosystem'))
         self._strict_assert(arguments.get('url'))

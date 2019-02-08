@@ -1,3 +1,5 @@
+"""JSL schema for Github worker results."""
+
 import jsl
 
 from f8a_worker.schemas import JSLSchemaBaseWithRelease, added_in, removed_in
@@ -9,17 +11,23 @@ ROLE_v1_0_2 = "v1-0-2"
 ROLE_v1_0_3 = "v1-0-3"
 ROLE_v1_0_4 = "v1-0-4"
 ROLE_v2_0_0 = "v2-0-0"
+ROLE_v2_0_1 = "v2-0-1"
 ROLE_TITLE = jsl.roles.Var({
     ROLE_v1_0_0: "Github Results v1-0-0",
     ROLE_v1_0_1: "Github Results v1-0-1",
     ROLE_v1_0_3: "Github Results v1-0-3",
     ROLE_v1_0_4: "Github Results v1-0-4",
     ROLE_v2_0_0: "Github Results v2-0-0",
+    ROLE_v2_0_1: "Github Results v2-0-1",
 })
 
 
 class GithubLastYearCommits(jsl.Document):
+    """JSL schema for Details of last year Github commits."""
+
     class Options(object):
+        """JSL schema for Details of last year Github commits."""
+
         definition_id = "github_last_year_commits_details"
         description = "Details of last year Github commits"
 
@@ -28,7 +36,11 @@ class GithubLastYearCommits(jsl.Document):
 
 
 class GithubItemsByTime(jsl.Document):
+    """JSL schema for Details of updated Github items."""
+
     class Options(object):
+        """JSL schema for Details of updated Github items."""
+
         definition_id = "github_issue&prs_with_time_duration"
         description = "Details of Github issues + prs yearly or monthly or any given date-range"
 
@@ -37,7 +49,11 @@ class GithubItemsByTime(jsl.Document):
 
 
 class GithubUpdatedIssues(jsl.Document):
+    """JSL schema for Details of updated Github issues."""
+
     class Options(object):
+        """JSL schema for Details of updated Github issues."""
+
         definition_id = "github_issues_details"
         description = "Details of updated Github issues"
     with jsl.Scope(ROLE_v1_0_0) as v1_0_0:
@@ -49,7 +65,11 @@ class GithubUpdatedIssues(jsl.Document):
 
 
 class GithubUpdatedPullRequests(GithubUpdatedIssues):
+    """JSL schema for Details of updated Github pull requests."""
+
     class Options(object):
+        """JSL schema for Details of updated Github pull requests."""
+
         definition_id = "github_pull_requests_details"
         description = "Details of updated Github pull requests"
     with jsl.Scope(ROLE_v1_0_0) as v1_0_0:
@@ -61,7 +81,11 @@ class GithubUpdatedPullRequests(GithubUpdatedIssues):
 
 
 class GithubDetail(jsl.Document):
+    """JSL schema for Github worker results details."""
+
     class Options(object):
+        """JSL schema for Github worker results details."""
+
         definition_id = "github_extracted_details"
         description = "Details of Github inspection"
 
@@ -81,10 +105,16 @@ class GithubDetail(jsl.Document):
         v1_0_3.topics = jsl.ArrayField(jsl.StringField(), required=True)
     with added_in(ROLE_v1_0_4) as since_v1_0_4:
         since_v1_0_4.topics = jsl.ArrayField(jsl.StringField())
+    with added_in(ROLE_v2_0_1) as since_v2_0_1:
+        since_v2_0_1.license = jsl.DictField()
 
 
 class GithubResult(JSLSchemaBaseWithRelease):
+    """JSL schema for Github worker results."""
+
     class Options(object):
+        """JSL schema for Github worker results."""
+
         definition_id = "github_details"
         description = "Result of Github worker"
 

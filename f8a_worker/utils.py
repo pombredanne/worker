@@ -1,142 +1,56 @@
+"""Module containing helper functions that are used by other parts of worker."""
+
+import datetime
 import getpass
 import json
 import logging
-import datetime
-import tempfile
-import shutil
 import signal
-from os import path as os_path, walk, getcwd, chdir, environ as os_environ, killpg, getpgid
-from threading import Thread
-from subprocess import Popen, PIPE, check_output, CalledProcessError, TimeoutExpired
-from traceback import format_exc
-from shlex import split
-from queue import Queue, Empty
+import time
+import re
 from contextlib import contextmanager
-from urllib.parse import unquote
+from os import path as os_path, walk, getcwd, chdir, environ as os_environ, killpg, getpgid
+from queue import Queue, Empty
+from shlex import split
+from subprocess import Popen, PIPE, check_output, CalledProcessError, TimeoutExpired
+from threading import Thread
+from traceback import format_exc
+from urllib.parse import unquote, urlparse
+
 import requests
-from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
+from requests.exceptions import HTTPError
 from requests.packages.urllib3.util.retry import Retry
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy import desc
-
-from f8a_worker.defaults import configuration
-from f8a_worker.errors import TaskError
-from f8a_worker.models import (Analysis, Ecosystem, Package, Version,
-                               PackageGHUsage, ComponentGHUsage, DownstreamMap)
-
 from selinon import StoragePool
+from sqlalchemy.exc import SQLAlchemyError
+
+from f8a_worker.enums import EcosystemBackend
+from f8a_worker.errors import TaskError, NotABugTaskError
+from f8a_worker.models import (Analysis, Ecosystem, Package, Version)
 
 logger = logging.getLogger(__name__)
 
 
-def get_package_dependents_count(ecosystem_backend, package, db_session=None):
-    """Get number of GitHub projects dependent on the `package`.
-
-    :param ecosystem_backend: str, Ecosystem backend from `f8a_worker.enums.EcosystemBackend`
-    :param package: str, Package name
-    :param db_session: obj, Database session to use for querying
-    :return: number of dependent projects, or -1 if the information is not available
-    """
-    if not db_session:
-        storage = StoragePool.get_connected_storage("BayesianPostgres")
-        db_session = storage.session
-
-    try:
-        count = db_session.query(PackageGHUsage.count).filter(PackageGHUsage.name == package) \
-                          .filter(PackageGHUsage.ecosystem_backend == ecosystem_backend) \
-                          .order_by(desc(PackageGHUsage.timestamp)) \
-                          .first()
-    except SQLAlchemyError:
-        db_session.rollback()
-        raise
-
-    if count:
-        return count[0]
-    return -1
-
-
-def get_dependents_count(ecosystem_backend, package, version, db_session=None):
-    """Get number of GitHub projects dependent on given (package, version).
-
-    :param ecosystem_backend: str, Ecosystem backend from `f8a_worker.enums.EcosystemBackend`
-    :param package: str, Package name
-    :param version: str, Package version
-    :param db_session: obj, Database session to use for querying
-    :return: number of dependent projects, or -1 if the information is not available
-    """
-    if not db_session:
-        storage = StoragePool.get_connected_storage("BayesianPostgres")
-        db_session = storage.session
-
-    try:
-        count = db_session.query(ComponentGHUsage.count) \
-                          .filter(ComponentGHUsage.name == package) \
-                          .filter(ComponentGHUsage.version == version) \
-                          .filter(ComponentGHUsage.ecosystem_backend == ecosystem_backend) \
-                          .order_by(desc(ComponentGHUsage.timestamp)) \
-                          .first()
-    except SQLAlchemyError:
-        db_session.rollback()
-        raise
-
-    if count:
-        return count[0]
-    return -1
-
-
 def get_latest_analysis(ecosystem, package, version, db_session=None):
-    """ Get latest analysis for the given EPV"""
+    """Get latest analysis for the given EPV."""
     if not db_session:
         storage = StoragePool.get_connected_storage("BayesianPostgres")
         db_session = storage.session
 
     try:
-        return db_session.query(Analysis).\
-            filter(Ecosystem.name == ecosystem).\
-            filter(Package.name == package).\
-            filter(Version.identifier == version).\
-            order_by(Analysis.started_at.desc()).\
+        return db_session.query(Analysis). \
+            filter(Ecosystem.name == ecosystem). \
+            filter(Package.name == package). \
+            filter(Version.identifier == version). \
+            order_by(Analysis.started_at.desc()). \
             first()
     except SQLAlchemyError:
         db_session.rollback()
         raise
 
 
-def get_component_percentile_rank(ecosystem_backend, package, version, db_session=None):
-    """Get component's percentile rank.
-
-    :param ecosystem_backend: str, Ecosystem backend from `f8a_worker.enums.EcosystemBackend`
-    :param package: str, Package name
-    :param version: str, Package version
-    :param db_session: obj, Database session to use for querying
-    :return: component's percentile rank, or -1 if the information is not available
-    """
-
-    if not db_session:
-        storage = StoragePool.get_connected_storage("BayesianPostgres")
-        db_session = storage.session
-
-    try:
-        rank = db_session.query(ComponentGHUsage.percentile_rank) \
-            .filter(ComponentGHUsage.name == package) \
-            .filter(ComponentGHUsage.version == version) \
-            .filter(ComponentGHUsage.ecosystem_backend == ecosystem_backend) \
-            .order_by(desc(ComponentGHUsage.timestamp)) \
-            .first()
-    except SQLAlchemyError:
-        db_session.rollback()
-        raise
-
-    if rank:
-        return rank[0]
-    return 0
-
-
 @contextmanager
 def cwd(target):
-    "Manage cwd in a pushd/popd fashion"
+    """Manage cwd in a pushd/popd fashion."""
     curdir = getcwd()
     chdir(target)
     try:
@@ -146,19 +60,10 @@ def cwd(target):
 
 
 @contextmanager
-def tempdir():
-    dirpath = tempfile.mkdtemp()
-    try:
-        yield dirpath
-    finally:
-        if os_path.isdir(dirpath):
-            shutil.rmtree(dirpath)
-
-
-@contextmanager
 def username():
-    """ workaround for failing getpass.getuser()
-        http://blog.dscpl.com.au/2015/12/unknown-user-when-running-docker.html
+    """Workaround for failing getpass.getuser().
+
+    http://blog.dscpl.com.au/2015/12/unknown-user-when-running-docker.html
     """
     user = ''
     try:
@@ -174,6 +79,7 @@ def username():
 
 
 def assert_not_none(name, value):
+    """Assert value is not None."""
     if value is None:
         raise ValueError('Parameter %r is None' % name)
 
@@ -182,6 +88,7 @@ class TimedCommand(object):
     """Execute arbitrary shell command in a timeout-able manner."""
 
     def __init__(self, command):
+        """Initialize command."""
         # parse with shlex if not execve friendly
         if isinstance(command, str):
             command = split(command)
@@ -247,14 +154,13 @@ class TimedCommand(object):
 
     @staticmethod
     def get_command_output(args, graceful=True, is_json=False, timeout=300, **kwargs):
-        """Wrapper around get_command_output() with implicit timeout of 5 minutes."""
+        """Wrap the function to get command output with implicit timeout of 5 minutes."""
         kwargs['timeout'] = timeout
         return get_command_output(args, graceful, is_json, **kwargs)
 
 
 def get_command_output(args, graceful=True, is_json=False, **kwargs):
-    """
-    improved version of subprocess.check_output
+    """Improved version of subprocess.check_output.
 
     :param graceful: bool, if False, raise Exception when command fails
     :param is_json: bool, if True, return decoded json
@@ -273,9 +179,15 @@ def get_command_output(args, graceful=True, is_json=False, **kwargs):
             logger.warning("command %s timed out:\n%s", args, ex.output)
         else:
             logger.warning("command %s ended with %s\n%s", args, ex.returncode, ex.output)
+
         if not graceful:
             logger.error("exception is fatal")
+            # we don't know whether this is a bug or the command was simply called
+            # with invalid/unsupported input. Caller needs to catch the exception
+            # and decide.
             raise TaskError("Error during running command %s: %r" % (args, ex.output))
+        else:
+            logger.debug("Ignoring because graceful flag is set")
         return []
     else:
         if is_json:
@@ -286,7 +198,7 @@ def get_command_output(args, graceful=True, is_json=False, **kwargs):
 
 
 def get_all_files_from(target, path_filter=None, file_filter=None):
-    "Enumerate all files in target directory, can be filtered with custom delegates"
+    """Enumerate all files in target directory, can be filtered with custom delegates."""
     for root, dirs, files in walk(target):
         for file in files:
             joined = os_path.abspath(os_path.join(root, file))
@@ -302,19 +214,19 @@ def get_all_files_from(target, path_filter=None, file_filter=None):
 
 
 def hidden_path_filter(item):
-    "Filter out hidden files or files in hidden directories"
+    """Filter out hidden files or files in hidden directories."""
     return not any(sub.startswith('.') for sub in item.split(os_path.sep))
 
 
 def json_serial(obj):
+    """Return time obj formatted according to ISO."""
     if isinstance(obj, datetime.datetime):
         return obj.isoformat()
     raise TypeError('Type {t} not serializable'.format(t=type(obj)))
 
 
 def in_path(directory, path):
-    """
-    is directory in path?
+    """Check whether directory is in path.
 
     :param directory: str
     :param path: str
@@ -325,13 +237,15 @@ def in_path(directory, path):
 
 
 def skip_git_files(path):
-    "Git skipping closure of in_path"
+    """Git skipping closure of in_path."""
     return not in_path('.git', path)
 
 
 class ThreadPool(object):
+    """Implementation of thread pool."""
+
     def __init__(self, target, num_workers=10, timeout=3):
-        """Initialize `ThreadPool`
+        """Initialize `ThreadPool`.
 
         :param target: Function that accepts exactly one argument
         :param num_workers: int, number of worker threads to spawn
@@ -351,10 +265,11 @@ class ThreadPool(object):
         self.queue.put(arg)
 
     def start(self):
-        """Start processing by all threads"""
+        """Start processing by all threads."""
         [t.start() for t in self._threads]
 
     def join(self):
+        """Join all threads."""
         [t.join() for t in self._threads]
         self.queue.join()
 
@@ -370,16 +285,17 @@ class ThreadPool(object):
                 self.queue.task_done()
 
     def __enter__(self):
+        """Enter context manager."""
         self.start()
         return self
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, *_args, **_kwargs):
+        """Exit context manager."""
         self.join()
 
 
 def compute_digest(target, function='sha256', raise_on_error=False):
-    """
-    compute digest of a provided file
+    """Compute digest of a provided file.
 
     :param target: str, file path
     :param function: str, prefix name of the hashing function
@@ -402,8 +318,7 @@ def compute_digest(target, function='sha256', raise_on_error=False):
 
 
 class MavenCoordinates(object):
-    """
-    Represents Maven coordinates.
+    """Represents Maven coordinates.
 
     https://maven.apache.org/pom.html#Maven_Coordinates
     """
@@ -412,6 +327,7 @@ class MavenCoordinates(object):
 
     def __init__(self, groupId, artifactId, version='',
                  classifier='', packaging=None):
+        """Initialize attributes."""
         self.groupId = groupId
         self.artifactId = artifactId
         self.classifier = classifier
@@ -419,11 +335,11 @@ class MavenCoordinates(object):
         self.version = version
 
     def is_valid(self):
-        """Checks if the current coordinates are valid."""
+        """Check if the current coordinates are valid."""
         return self.groupId and self.artifactId and self.version and self.packaging
 
     def to_str(self, omit_version=False):
-        """Returns string representation of the coordinates."""
+        """Return string representation of the coordinates."""
         mvnstr = "{g}:{a}".format(g=self.groupId, a=self.artifactId)
         pack = self.packaging
         if pack == MavenCoordinates._default_packaging:
@@ -443,7 +359,7 @@ class MavenCoordinates(object):
         return mvnstr
 
     def to_repo_url(self, ga_only=False):
-        """Returns relative path to the artifact in Maven repository."""
+        """Return relative path to the artifact in Maven repository."""
         if ga_only:
             return "{g}/{a}".format(g=self.groupId.replace('.', '/'),
                                     a=self.artifactId)
@@ -460,6 +376,7 @@ class MavenCoordinates(object):
 
     @staticmethod
     def _parse_string(coordinates_str):
+        """Parse string representation into a dictionary."""
         a = {'groupId': '',
              'artifactId': '',
              'packaging': MavenCoordinates._default_packaging,
@@ -482,110 +399,31 @@ class MavenCoordinates(object):
         return a
 
     def __repr__(self):
+        """Represent as string."""
         return self.to_str()
 
     def __eq__(self, other):
+        """Implement == operator."""
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
     def __ne__(self, other):
+        """Implement != operator."""
         return not self.__eq__(other)
 
     @classmethod
     def normalize_str(cls, coordinates_str):
+        """Normalize string representation."""
         return cls.from_str(coordinates_str).to_str()
 
     @classmethod
     def from_str(cls, coordinates_str):
+        """Create instance from string."""
         coordinates = MavenCoordinates._parse_string(coordinates_str)
         return cls(**coordinates)
 
 
-def get_latest_upstream_details(ecosystem, package):
-    """Returns dict representation of Anitya project"""
-    url = configuration.ANITYA_URL + '/api/by_ecosystem/{e}/{p}'.\
-        format(e=ecosystem, p=package)
-
-    res = requests.get(url)
-    res.raise_for_status()
-    return res.json()
-
-
-def safe_get_latest_version(ecosystem, package):
-    version = None
-    try:
-        version = get_latest_upstream_details(ecosystem, package)['versions'][0]
-    except (requests.exceptions.RequestException, IndexError) as e:
-        logger.warning('Unable to obtain latest version information: %r' % e)
-    return version
-
-
-class DownstreamMapCache(object):
-    """ Use Postgres as Redis-like hash map. """
-    def __init__(self, session=None):
-        if session is not None:
-            self.session = session
-        else:
-            storage = StoragePool.get_connected_storage("BayesianPostgres")
-            self.session = storage.session
-
-    def _query(self, key):
-        """ Returns None if key is not in DB """
-        try:
-            return self.session.query(DownstreamMap) \
-                               .filter(DownstreamMap.key == key) \
-                               .first()
-        except SQLAlchemyError:
-            self.session.rollback()
-            raise
-
-    def _update(self, key, value):
-        q = self._query(key)
-        if q and q.value != value:
-            try:
-                q.value = value
-                self.session.commit()
-            except SQLAlchemyError:
-                self.session.rollback()
-                raise
-
-    def __getitem__(self, key):
-        q = self._query(key)
-        return q.value if q else None
-
-    def __setitem__(self, key, value):
-        mapping = DownstreamMap(key=key, value=value)
-        try:
-            self.session.add(mapping)
-            self.session.commit()
-        except SQLAlchemyError:
-            self.session.rollback()
-            try:
-                self._update(key, value)
-            except Exception:
-                raise
-            else:
-                pass
-
-
-def usage_rank2str(rank):
-    """Translates percentile rank to a string representing relative usage of a component."""
-    used = 'n/a'
-    if rank > 90:
-        used = 'very often'
-    elif rank > 80:
-        used = 'often'
-    elif rank > 10:
-        used = 'used'
-    elif rank > 0:
-        used = 'seldom'
-    elif rank == 0:
-        used = 'not used'
-    return used
-
-
 def parse_gh_repo(potential_url):
-    """Since people use a wide variety of URL forms for Github repo referencing,
-    we need to cover them all. E.g.:
+    """Cover the following variety of URL forms for Github repo referencing.
 
     1) www.github.com/foo/bar
     2) (same as above, but with ".git" in the end)
@@ -600,9 +438,8 @@ def parse_gh_repo(potential_url):
 
     Notably, the Github repo *must* have exactly username and reponame, nothing else and nothing
     more. E.g. `github.com/<username>/<reponame>/<something>` is *not* recognized.
-
-    Fun, eh?
     """
+    # TODO: reduce cyclomatic complexity
     if not potential_url:
         return None
 
@@ -645,6 +482,9 @@ def url2git_repo(url):
             raise ValueError("Unable to parse git repo URL '%s'" % str(url))
         return 'https://{}/{}'.format(url[0], url[1])
 
+    if not url.startswith(('http://', 'https://', 'git://')):
+        return 'http://' + url
+
     return url
 
 
@@ -655,7 +495,8 @@ def case_sensitivity_transform(ecosystem, name):
     :param name: name of ecosystem
     :return: transformed package name base on ecosystem package case sensitivity
     """
-    if ecosystem == 'pypi':
+    if Ecosystem.by_name(StoragePool.get_connected_storage('BayesianPostgres').session,
+                         ecosystem).is_backed_by(EcosystemBackend.pypi):
         return name.lower()
 
     return name
@@ -663,6 +504,7 @@ def case_sensitivity_transform(ecosystem, name):
 
 def get_session_retry(retries=3, backoff_factor=0.2, status_forcelist=(404, 500, 502, 504),
                       session=None):
+    """Set HTTP Adapter with retries to session."""
     session = session or requests.Session()
     retry = Retry(total=retries, read=retries, connect=retries,
                   backoff_factor=backoff_factor, status_forcelist=status_forcelist)
@@ -671,19 +513,83 @@ def get_session_retry(retries=3, backoff_factor=0.2, status_forcelist=(404, 500,
     return session
 
 
-def normalize_package_name(ecosystem, name):
+def normalize_package_name(ecosystem_backend, name):
+    """Normalize package name.
+
+    :param ecosystem_backend: str, ecosystem backend
+    :param name: str, package name
+
+    :return: str, normalized package name for supported ecosystem backend,
+    the same package name otherwise
+    """
     normalized_name = name
-    if ecosystem == 'pypi':
-        case_sensitivity_transform(ecosystem, name)
-    elif ecosystem == 'go':
+
+    if ecosystem_backend == 'pypi':
+        # https://www.python.org/dev/peps/pep-0503/#normalized-names
+        normalized_name = re.sub(r'[-_.]+', '-', name).lower()
+    elif ecosystem_backend == 'maven':
+        # https://maven.apache.org/pom.html#Maven_Coordinates
+        normalized_name = MavenCoordinates.normalize_str(name)
+    elif ecosystem_backend == 'npm':
+        normalized_name = name
+    elif ecosystem_backend == 'go':
         # go package name is the host+path part of a URL, thus it can be URL encoded
         normalized_name = unquote(name)
     return normalized_name
 
 
 def get_user_email(user_profile):
+    """Return default email if user_profile doesn't contain any."""
     default_email = 'bayesian@redhat.com'
     if user_profile is not None:
         return user_profile.get('email', default_email)
     else:
         return default_email
+
+
+def get_response(url, headers=None, sleep_time=2, retry_count=10):
+    """Wrap requests which tries to get response.
+
+    :param url: URL where to do the request
+    :param headers: additional headers for request
+    :param sleep_time: sleep time between retries
+    :param retry_count: number of retries
+    :return: content of response's json
+    """
+    try:
+        for _ in range(retry_count):
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            if response.status_code == 204:
+                # json() below would otherwise fail with JSONDecodeError
+                raise HTTPError('No content')
+            response = response.json()
+            if response:
+                return response
+            time.sleep(sleep_time)
+        else:
+            raise NotABugTaskError("Number of retries exceeded")
+    except HTTPError as err:
+        message = "Failed to get results from {url} with {err}".format(url=url, err=err)
+        logger.error(message)
+        raise NotABugTaskError(message) from err
+
+
+def add_maven_coords_to_set(coordinates_str, gav_set):
+    """Add Maven coordinates to the gav_set set."""
+    artifact_coords = MavenCoordinates.from_str(coordinates_str)
+    gav_set.add("{ecosystem}:{group_id}:{artifact_id}:{version}".format(
+        ecosystem="maven",
+        group_id=artifact_coords.groupId,
+        artifact_id=artifact_coords.artifactId,
+        version=artifact_coords.version
+    ))
+
+
+def peek(iterable):
+    """Peeks the iterable to check if it's empty."""
+    try:
+        first = next(iterable)
+    except StopIteration:
+        return None
+    return first

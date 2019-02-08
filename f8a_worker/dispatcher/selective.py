@@ -1,12 +1,14 @@
+"""Determine whether we need to run a task or we can reuse already existing results."""
+
 import logging
 
 _logger = logging.getLogger(__name__)
 
 
 def selective_run_function(flow_name, node_name, node_args, task_names, storage_pool):
-    """A function that is called on selective run by dispatcher.
+    """Determine whether we need to run a task or we can reuse already existing results.
 
-    This function determines whether we need to run a task or we can reuse already existing results
+    This function that is called on selective run by dispatcher.
 
     :param flow_name: name of the flow in which this function is called
     :param node_args: flow arguments
@@ -15,8 +17,7 @@ def selective_run_function(flow_name, node_name, node_args, task_names, storage_
     :return: ID of task that should be reused, None if task should be run again
     """
     try:
-        if flow_name in ('bayesianPackageFlow', 'bayesianPackageAnalysisFlow',
-                         'bayesianPackageTaggingFlow'):
+        if flow_name in ('bayesianPackageFlow', 'bayesianPackageAnalysisFlow'):
             task_result = storage_pool.get_connected_storage('PackagePostgres').\
                 get_latest_task_entry(
                     node_args['ecosystem'],

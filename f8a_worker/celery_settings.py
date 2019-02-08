@@ -1,3 +1,5 @@
+"""Setup Celery."""
+
 import os
 import logging
 from urllib.parse import quote
@@ -8,7 +10,8 @@ _logger = logging.getLogger(__name__)
 
 
 def _use_sqs():
-    """
+    """Check if worker should use Amazon SQS.
+
     :return: True if worker should use Amazon SQS
     """
     has_key_id = configuration.AWS_SQS_ACCESS_KEY_ID is not None
@@ -33,6 +36,8 @@ def _use_sqs():
 
 
 class CelerySettings(object):
+    """Setup Celery."""
+
     _DEFAULT_SQS_REGION = 'us-east-1'
     _DEFAULT_RESULT_BACKEND = 'db+' + configuration.POSTGRES_CONNECTION
 
@@ -71,16 +76,17 @@ class CelerySettings(object):
         accept_content = ['json']
 
     def __init__(self):
+        """Not implemented."""
         raise NotImplementedError("Unable to instantiate")
 
     @classmethod
     def disable_result_backend(cls):
-        """Disable backend so we don't need to connect to it if not necessary"""
+        """Disable backend so we don't need to connect to it if not necessary."""
         cls.result_backend = None
 
 
 @setup_logging.connect
-def configure_logging(**kwargs):
+def configure_logging(*_args, **_kwargs):
     """Set up logging for worker."""
     level = 'DEBUG' if configuration.is_local_deployment() else 'INFO'
 
@@ -110,11 +116,6 @@ def configure_logging(**kwargs):
             'level': 'INFO',
         },
         'selinon': {
-            'handlers': ['verbose'],
-            'level': 'DEBUG',
-            'propagate': False
-        },
-        'selinonlib': {
             'handlers': ['verbose'],
             'level': 'DEBUG',
             'propagate': False

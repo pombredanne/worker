@@ -1,11 +1,9 @@
 # normally pulled in by kombu, but version 2.2.0 is broken
 amqp<=2.1.4
 # also handles Celery as a requirement
-selinonlib
-selinon
+selinon[celery]
 sqlalchemy
 psycopg2
-pygithub
 lxml
 beautifulsoup4
 # We install a patched version from dnf as we cannot use requests from PyPI - we need own certificates
@@ -13,15 +11,16 @@ beautifulsoup4
 anymarkup
 jsl
 jsonschema
-BigQuery-Python
 unidiff
 requests
+requests-futures
 git2json
-numpy
-scikit-learn
-scipy
+gitpython
 # Amazon AWS SQS
 # Celery transparently uses boto
 boto
 boto3
 semantic_version
+radon==3.0.1
+watchdog
+raven

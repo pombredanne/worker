@@ -1,4 +1,4 @@
-Worker definition in Bayesian
+Worker definition in fabric8-analytics
 -----------------------------
 
 Worker node is a self-contained unit encapsulating particular type of workload
@@ -8,7 +8,7 @@ control is established by message passing through a message bus, but these
 infrastructure details are outside of the scope of this document.
 
 ## Overview
-Tasks are currently abstracted via [Celery](https://celeryproject.org), which
+Tasks are currently abstracted via [Celery](http://www.celeryproject.org), which
 is a distributed task queue implemented on top of many different message
 passing mechanisms (AMQP, ZeroMQ, Redis, ORM mapping ...) and different
 storage backends for (non-complimentary) message persistence. Celery makes
@@ -19,22 +19,19 @@ function/method:
 @app.task
 def add_task(x, y):
     return x + y
-
 ```
 
 For the project purposes, there was developed project
 [Selinon](https://github.com/selinon) that is written on top of Celery and
 provides fine grained control of task flows. Configuration of the whole workflow
 is done in simple YAML configuration files (see [dispatcher configuration
-files](...)) which model time or data dependencies between tasks. You can
+files](../dispatcher/)) which model time or data dependencies between tasks. You can
 easily visualize flows by prepared script in `hack/visualize_flows.sh`. Make
-sure you have Selinon installed using `hack/update_selinon.sh` - Selinon has
-no releases now as it is still under development, so you have to install
-particular commit version.
+sure you have Selinon installed.
 
 ## BaseTask
 For the purpose of better code reuse and maintainability every new worker type
-should be implemented as a subclass of BaseTask abstract base class that is
+should be implemented as a subclass of `BaseTask` abstract base class that is
 derived from `SelinonTask`:
 
 ```python
@@ -48,7 +45,7 @@ What is the actual purpose of this base class and its methods?
 
 * `run()`: Selinon transparently calls `run()`, which takes care of task audit
   and some additional checks and calls execute()
-* `execute()`: Task's workhorse, called from `run(). Abstract method.
+* `execute()`: Task's workhorse, called from `run()`. Abstract method.
   Once implemented returns dictionary with results.
 
 ## Example worker task
@@ -68,44 +65,39 @@ with all the gory details of messaging and queueing - simply implement an
 Nice and shiny, but what if something goes wrong ?
 
 The good thing is that raising an exception is a canonical mechanism to signal
-a failed state for tasks in Selinon/Celery, as returning False or None could be
+a failed state for tasks in Selinon/Celery, as returning `False` or `None` could be
 a valid result depending on the context. That means that if something really
 goes wrong, we’ll know about it, and we’ll have the precise traceback stored
 at our disposal. The failed task can be automatically rescheduled after
 predefined time period, if it makes sense.
 
 For up2date list of all currently implemented tasks see
-[nodes.yml](https://github.com/fabric8-analytics/fabric8-analytics-worker/blob/master/f8a_worker/dispatcher/nodes.yml)
+[nodes.yml](../dispatcher/nodes.yml)
 Selinon configuration file that states all flow nodes available in the system.
 
 ## Utility workers
 
-Workers that assist other workers but don't provide exposed data.
+Workers that assist other workers.
 
-* [binwalk.py](binwalk.py) - Find and extract interesting files / data from binary images
+* [InitAnalysisFlow](init_analysis_flow.py) and [InitPackageFlow](init_package_flow.py)- Initializes whole analysis
 
-* [digester.py](digester.py) - Computes various digests of all files found in target cache path
-
-* [init.py](init.py) - This task initializes whole analysis
-
-* [linguist.py](linguist.py) - GitHub's tool to figure out what language is used in code
+* [FinalizeTask](finalize.py) and [PackageFinalizeTask](finalize.py) - Finish a flow and store audit
 
 ## Data Workers
 
-Workers that provide data exposed to the user.
+Workers that expose data to the user.
+The following list contains only examples,
+because some workers are not part of [any flow](../dispatcher/flows/),
+[their code is there](./) just from historical reasons.
 
-* [csmock_worker.py](csmock_worker.py) - Static code analysis.
+* [DependencySnapshotTask](dependency_snapshot.py) - Analyzes dependencies
 
-* [code_metrics.py](code_metrics.py) - Code metrics computation.
+* [DigesterTask](digester.py) - Computes various digests of all files found in target cache path
 
-* [CVEchecker.py](CVEchecker.py) - Queries CVE database for security issues.
+* [GithubTask](githuber.py) - Gets various info via Github API
 
-* [githuber.py](githuber.py) - Gets popularity and issues data from Github
+* [LibrariesIoTask](libraries_io.py) - Collects statistics from Libraries.io
 
-* [licenser.py](licenser.py) - Check licences of all files of a package
+* [LicenseCheckTask](license.py) - Check licences of all files of a package
 
-* [mercator.py](mercator.py) - Extracts ecosystem specific information and transforms it to a common scheme
-
-* [oscryptocatcher.py](oscryptocatcher.py) - Matches crypto algorithms in sources based on content
-
-* [BigQuery_GH](docs/bigquery_gh.md) ([bigquery_gh.py](bigquery_gh.py)) - Gets GitHub package usage information from BigQuery
+* [MercatorTask](mercator.py) - Extracts ecosystem specific information and transforms it to a common scheme

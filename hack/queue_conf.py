@@ -17,6 +17,7 @@ _logger.setLevel(logging.DEBUG)
 _AWS_SQS_REGION = os.getenv('AWS_SQS_REGION', 'us-east-1')
 _AWS_ACCESS_KEY_ID = os.getenv('AWS_SQS_ACCESS_KEY_ID')
 _AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SQS_SECRET_ACCESS_KEY')
+_DEPLOYMENT_PREFIX = os.getenv('DEPLOYMENT_PREFIX')
 
 
 def set_queue_attributes(queue_names):
@@ -47,16 +48,27 @@ def set_queue_attributes(queue_names):
                 'MessageRetentionPeriod': str(int(timedelta(days=14).total_seconds()))
             }
         )
-
         _logger.debug("Remote responded with %r after setting queue attributes for %r",
                       response, queue_name)
+
+        if _DEPLOYMENT_PREFIX:
+            response = client.tag_queue(
+                QueueUrl=queue_url,
+                Tags={
+                    'ENV': _DEPLOYMENT_PREFIX
+                }
+            )
+            _logger.debug("Remote responded with %r after setting queue tag for %r",
+                          response, queue_name)
 
     _logger.info("Queue attributes were adjusted for all %d queues" % len(queue_names))
 
 
 def print_help():
+    """Display the help message on the standard output."""
     print("Set queue attributes for fabric8-worker.\n"
           "Usage: {} COMMA-SEPARATED-LIST-OF-QUEUES".format(sys.argv[0]))
+
 
 if __name__ == '__main__':
     if os.getenv('F8A_UNCLOUDED_MODE') in ('1', 'True', 'true'):
@@ -73,4 +85,3 @@ if __name__ == '__main__':
         sys.exit(0)
 
     set_queue_attributes(sys.argv[1].split(','))
-

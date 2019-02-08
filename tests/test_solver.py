@@ -1,3 +1,5 @@
+"""Tests covering code in solver.py."""
+
 import pytest
 
 import datetime
@@ -7,10 +9,12 @@ from f8a_worker.solver import\
     (get_ecosystem_solver, Dependency,
      PypiDependencyParser, NpmDependencyParser, OSSIndexDependencyParser, NugetDependencyParser,
      GolangDependencyParser, MavenReleasesFetcher, NpmReleasesFetcher, NugetReleasesFetcher,
-     F8aReleasesFetcher, GolangReleasesFetcher)
+     F8aReleasesFetcher, GolangReleasesFetcher, PypiReleasesFetcher)
 
 
 class TestDependencyParser(object):
+    """Tests for DependencyParser subclasses."""
+
     @pytest.mark.parametrize('args, expected', [
         (["name 1.0"],
          [Dependency("name", [('>=', '1.0')])]),
@@ -32,6 +36,7 @@ class TestDependencyParser(object):
          []),
     ])
     def test_nuget_dependency_parser_parse(self, args, expected):
+        """Test NugetDependencyParser.parse()."""
         dep_parser = NugetDependencyParser()
         if not expected:
             with pytest.raises(ValueError):
@@ -46,6 +51,7 @@ class TestDependencyParser(object):
          [Dependency("github.com/gorilla/mux", "3f19343c7d9ce75569b952758bd236af94956061")])
     ])
     def test_golang_dependency_parser_parse(self, args, expected):
+        """Test GolangDependencyParser.parse()."""
         dep_parser = GolangDependencyParser()
         assert dep_parser.parse(args) == expected
 
@@ -56,8 +62,11 @@ class TestDependencyParser(object):
          [Dependency("name", [[('>=', '0.6.0'), ('<', '0.7.0')]])]),
         (["name >0.6", "node < 1"],
          [Dependency("name", [('>=', '0.7.0')]), Dependency("node", [('<', '1.0.0')])]),
+        (["name latest"],
+         [Dependency("name", [('>=', '0.0.0')])]),
     ])
     def test_npm_dependency_parser_parse(self, args, expected):
+        """Test NpmDependencyParser.parse()."""
         dep_parser = NpmDependencyParser()
         assert dep_parser.parse(args) == expected
 
@@ -66,6 +75,7 @@ class TestDependencyParser(object):
          [Dependency("name", [('<', '1.6.17'), [('>=', '2.0.0'), ('<', '2.0.2')]])]),
     ])
     def test_oss_index_dependency_parser_parse(self, args, expected):
+        """Test OSSIndexDependencyParser.parse()."""
         dep_parser = OSSIndexDependencyParser()
         assert dep_parser.parse(args) == expected
 
@@ -81,6 +91,7 @@ class TestDependencyParser(object):
           "node": "<1.0.0"}),
     ])
     def test_npm_dependency_parser_compose(self, args, expected):
+        """Test NpmDependencyParser.compose()."""
         dep_parser = NpmDependencyParser()
         assert dep_parser.compose(args) == expected
 
@@ -97,6 +108,7 @@ class TestDependencyParser(object):
          [Dependency("name", [('<', '1.7.0')])]),
     ])
     def test_npm_dependency_parser_restrict_versions(self, args, expected):
+        """Test NpmDependencyParser.restrict_versions()."""
         dep_parser = NpmDependencyParser()
         assert dep_parser.restrict_versions(args) == expected
 
@@ -107,6 +119,7 @@ class TestDependencyParser(object):
          [Dependency("name", [[('>=', '1.0'), ('<', '2.0')]])]),
     ])
     def test_pypi_dependency_parser_parse(self, args, expected):
+        """Test PypiDependencyParser.parse()."""
         dep_parser = PypiDependencyParser()
         parsed = dep_parser.parse(args)
         assert parsed[0].name == expected[0].name
@@ -114,6 +127,8 @@ class TestDependencyParser(object):
 
 
 class TestSolver(object):
+    """Tests for Solver subclasses."""
+
     SERVE_STATIC_VER = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4",
                         "1.1.0",
                         "1.2.0", "1.2.1", "1.2.2", "1.2.3",
@@ -149,6 +164,7 @@ class TestSolver(object):
         ('<1.2.0 >1.2.0 || <1.2.1 >1.2.1', []),
     ])
     def test_npm_solver(self, npm, semver_string, expected):
+        """Test NpmSolver."""
         solver = get_ecosystem_solver(npm)
         name = 'test_name'
         # mock fetched releases to have predictable results
@@ -166,6 +182,7 @@ class TestSolver(object):
          {'foo:bar': '6.6.6', 'org.webjars.npm:jquery': '3.0.0'})
     ])
     def test_maven_solver(self, maven, dependencies, expected):
+        """Test MavenSolver."""
         solver = get_ecosystem_solver(maven)
         solver_result = solver.solve(dependencies)
         assert len(solver_result) == len(dependencies)
@@ -173,28 +190,26 @@ class TestSolver(object):
             assert expected.get(name, '') == version
 
     def test_pypi_solver(self, pypi):
+        """Test PypiSolver."""
         solver = get_ecosystem_solver(pypi)
         deps = ['django == 1.9.10',
                 'pymongo >=3.0, <3.2.2',
                 'six~=1.7.1',
+                'coverage~=3.5.1b1.dev',
+                'pyasn1>=0.2.2,~=0.2.2',
                 'requests===2.16.2',
                 'click==0.*']
         out = solver.solve(deps)
         assert out == {'django': '1.9.10',
                        'pymongo': '3.2.1',
                        'six': '1.7.3',
+                       'coverage': '3.5.3',
+                       'pyasn1': '0.2.3',
                        'requests': '2.16.2',
                        'click': '0.7'}
 
-    def test_rubygems_solver(self, rubygems):
-        solver = get_ecosystem_solver(rubygems)
-        deps = ['hoe <3.4.0',
-                'rake-compiler ~>0.9.2']
-        out = solver.solve(deps)
-        assert out == {'hoe': '3.3.1',
-                       'rake-compiler': '0.9.9'}
-
     def test_nuget_solver(self, nuget):
+        """Test NugetSolver."""
         solver = get_ecosystem_solver(nuget)
         deps = ['jQuery [1.4.4, 1.6)',
                 'NUnit 3.2.1',
@@ -214,6 +229,7 @@ class TestSolver(object):
          {'github.com/msrb/mux': 'bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'})
     ])
     def test_golang_solver(self, go, dependencies, expected):
+        """Test GolangSolver."""
         solver = get_ecosystem_solver(go)
         solver_result = solver.solve(dependencies)
         assert len(solver_result) == len(dependencies)
@@ -223,12 +239,39 @@ class TestSolver(object):
 
 
 class TestFetcher(object):
+    """Tests for ReleasesFetcher subclasses."""
+
     @pytest.mark.parametrize('package, expected', [
         ('org.apache.flex.blazeds:flex-messaging-core',
          {'4.7.0', '4.7.1', '4.7.2', '4.7.3'})
     ])
     def test_maven_fetcher(self, maven, package, expected):
+        """Test MavenReleasesFetcher."""
         f = MavenReleasesFetcher(maven)
+        _, releases = f.fetch_releases(package)
+        assert set(releases) >= expected
+
+    @pytest.mark.parametrize('package, expected', [
+        ('serve-static', {'1.7.1', '1.7.2', '1.13.2'}),
+        ('@slicemenice/event-utils', {'1.0.0', '1.0.1', '1.1.0', '1.1.1'}),
+        ('somereallydummynonexistentpackage', set())
+    ])
+    def test_npm_fetcher(self, npm, package, expected):
+        """Test NpmReleasesFetcher."""
+        f = NpmReleasesFetcher(npm)
+        _, releases = f.fetch_releases(package)
+        assert set(releases) >= expected
+
+    @pytest.mark.parametrize('package, expected', [
+        ('anymarkup', {
+            '0.1.0', '0.1.1', '0.2.0', '0.3.0', '0.3.1', '0.4.0',
+            '0.4.1', '0.4.2', '0.4.3', '0.5.0', '0.6.0', '0.7.0'
+        }),
+        ('somereallydummynonexistentpackage', set())
+    ])
+    def test_pypi_fetcher(self, pypi, package, expected):
+        """Test NpmReleasesFetcher."""
+        f = PypiReleasesFetcher(pypi)
         _, releases = f.fetch_releases(package)
         assert set(releases) >= expected
 
@@ -242,26 +285,28 @@ class TestFetcher(object):
         ('Microsoft.AspNet.Mvc',
          {'5.0.0', '5.2.0', '5.2.3'}),
         ('NUnit',
-         {'2.6.4', '3.0.0', '3.7.1'}),
-        # Only one not sem-ver-compliant version
-        ('System.Data.SQLite',
-         {'1.0.105.2'})
+         {'2.6.4', '3.0.0', '3.7.1'})
     ])
     def test_nuget_fetcher(self, nuget, package, expected):
+        """Test NugetReleasesFetcher."""
         f = NugetReleasesFetcher(nuget)
         _, releases = f.fetch_releases(package)
         assert set(releases) >= expected
 
     @pytest.mark.parametrize('package, expected', [
         ('github.com/msrb/mux',
-         {'bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'})
+         {'bdd5a5a1b0b489d297b73eb62b5f6328df198bfc'}),
+        ('github.com/jpopelka/flynn/bootstrap',
+         {'2811174335f819551ec3de4f21ce75aa3e97be69'})
     ])
     def test_golang_fetcher(self, go, package, expected):
+        """Test GolangReleasesFetcher."""
         f = GolangReleasesFetcher(go)
         _, releases = f.fetch_releases(package)
         assert set(releases) == expected
 
     def test_f8a_fetcher(self, rdb, npm):
+        """Test F8aReleasesFetcher."""
         # create initial dataset
         package = Package(ecosystem=npm, name='f8a')
         rdb.add(package)
@@ -273,7 +318,7 @@ class TestFetcher(object):
             rdb.commit()
             analysis = Analysis(version=version)
             # Fetcher only selects finished analyses
-            analysis.finished_at = datetime.datetime.now()
+            analysis.finished_at = datetime.datetime.utcnow()
             rdb.add(analysis)
             rdb.commit()
 

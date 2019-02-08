@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+"""Class for using S3 for storing tasks` results."""
+
 import json
 import botocore
 from f8a_worker.utils import json_serial
@@ -7,6 +9,8 @@ from . import AmazonS3
 
 
 class S3DataBase(AmazonS3):
+    """Use S3 for storing tasks` results."""
+
     @staticmethod
     def _base_file_content(old_file_content, result):
         # remove entries we don't want to keep
@@ -40,7 +44,8 @@ class S3DataBase(AmazonS3):
 
         :param arguments: arguments as passed to the flow
         :param task_name: name of the task for which the key should be constructed
-        :return: fully qualified path to the task result"""
+        :return: fully qualified path to the task result
+        """
         base_file_name = cls._construct_base_file_name(arguments)
         return "{base_file_name}/{task_name}.json".format(base_file_name=base_file_name,
                                                           task_name=task_name)

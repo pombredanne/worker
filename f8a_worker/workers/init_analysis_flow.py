@@ -1,7 +1,12 @@
+"""Initialize package-version level analysis."""
+
 import os
 import datetime
 import shutil
+from selinon import FatalTaskError
+from sqlalchemy.orm.exc import NoResultFound
 from tempfile import mkdtemp
+
 from f8a_worker.object_cache import ObjectCache
 from f8a_worker.base import BaseTask
 from f8a_worker.process import IndianaJones, MavenCoordinates
@@ -10,37 +15,44 @@ from f8a_worker.utils import normalize_package_name
 
 
 class InitAnalysisFlow(BaseTask):
-    def execute(self, arguments):
-        self._strict_assert(arguments.get('name'))
-        self._strict_assert(arguments.get('version'))
-        self._strict_assert(arguments.get('ecosystem'))
+    """Download source and start whole analysis."""
 
-        # make sure we store package name based on ecosystem package naming case sensitivity
-        arguments['name'] = normalize_package_name(arguments['ecosystem'], arguments['name'])
+    def execute(self, arguments):
+        """Task code.
+
+        :param arguments: dictionary with task arguments
+        :return: {}, results
+        """
+        self.log.debug("Input Arguments: {}".format(arguments))
+        self._strict_assert(isinstance(arguments.get('ecosystem'), str))
+        self._strict_assert(isinstance(arguments.get('name'), str))
+        self._strict_assert(isinstance(arguments.get('version'), str))
 
         db = self.storage.session
-        ecosystem = Ecosystem.by_name(db, arguments['ecosystem'])
+        try:
+            ecosystem = Ecosystem.by_name(db, arguments['ecosystem'])
+        except NoResultFound:
+            raise FatalTaskError('Unknown ecosystem: %r' % arguments['ecosystem'])
+
+        # make sure we store package name in its normalized form
+        arguments['name'] = normalize_package_name(ecosystem.backend.name, arguments['name'])
+
         p = Package.get_or_create(db, ecosystem_id=ecosystem.id, name=arguments['name'])
         v = Version.get_or_create(db, package_id=p.id, identifier=arguments['version'])
 
         if not arguments.get('force'):
-            # TODO: this is OK for now, but if we will scale and there will be
-            # 2+ workers running this task they can potentially schedule two
-            # flows of a same type at the same time
             if db.query(Analysis).filter(Analysis.version_id == v.id).count() > 0:
-                # we need to propagate flags that were passed to flow, but not
-                # E/P/V - this way we are sure that for example graph import is
-                # scheduled (arguments['force_graph_sync'] == True)
-                arguments.pop('name')
-                arguments.pop('version')
-                arguments.pop('ecosystem')
+                arguments['analysis_already_exists'] = True
+                self.log.debug("Arguments returned by initAnalysisFlow without force: {}"
+                               .format(arguments))
                 return arguments
 
         cache_path = mkdtemp(dir=self.configuration.WORKER_DATA_DIR)
         epv_cache = ObjectCache.get_from_dict(arguments)
 
         try:
-            if not epv_cache.has_source_tarball():
+            if not epv_cache.\
+                    has_source_tarball():
                 _, source_tarball_path = IndianaJones.fetch_artifact(
                     ecosystem=ecosystem,
                     artifact=arguments['name'],
@@ -57,9 +69,8 @@ class InitAnalysisFlow(BaseTask):
                         epv_cache.put_source_jar(source_jar_path)
                     except Exception as e:
                         self.log.info(
-                            'Failed to fetch source jar for maven artifact "{e}/{p}/{v}": {err}'.
-                            format(e=arguments.get('ecosystem'),
-                                   p=arguments.get('name'),
+                            'Failed to fetch source jar for maven artifact "{n}/{v}": {err}'.
+                            format(n=arguments.get('name'),
                                    v=arguments.get('version'),
                                    err=str(e))
                         )
@@ -71,15 +82,21 @@ class InitAnalysisFlow(BaseTask):
             # always clean up cache
             shutil.rmtree(cache_path)
 
-        a = Analysis(version=v, access_count=1, started_at=datetime.datetime.now())
+        a = Analysis(version=v, access_count=1, started_at=datetime.datetime.utcnow())
         db.add(a)
         db.commit()
 
         arguments['document_id'] = a.id
+
+        # export ecosystem backend so we can use it to easily control flow later
+        arguments['ecosystem_backend'] = ecosystem.backend.name
+
+        self.log.debug("Arguments returned by InitAnalysisFlow are: {}".format(arguments))
         return arguments
 
     @staticmethod
     def _download_source_jar(target, ecosystem, arguments):
+        """Download sources jar."""
         artifact_coords = MavenCoordinates.from_str(arguments['name'])
         artifact_coords.packaging = 'jar'  # source is always jar even for war/aar etc.
         sources_classifiers = ['sources', 'src']
@@ -103,6 +120,7 @@ class InitAnalysisFlow(BaseTask):
 
     @staticmethod
     def _download_pom_xml(target, ecosystem, arguments):
+        """Download pom.xml."""
         artifact_coords = MavenCoordinates.from_str(arguments['name'])
         artifact_coords.packaging = 'pom'
         artifact_coords.classifier = ''  # pom.xml files have no classifiers

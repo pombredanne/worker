@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
+
+"""Adapter used for EPV analyses."""
+
 import datetime
 import hashlib
 import json
 from itertools import chain
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from selinon import StoragePool
+
+from f8a_worker.enums import EcosystemBackend
 from f8a_worker.models import Analysis, Ecosystem, Package, Version, WorkerResult, APIRequests
 from f8a_worker.utils import MavenCoordinates
 
@@ -24,6 +29,7 @@ class BayesianPostgres(PostgresBase):
 
     @property
     def s3(self):
+        """Retrieve the connector to the S3 database."""
         # Do S3 retrieval lazily so tests do not complain about S3 setup
         if self._s3 is None:
             self._s3 = StoragePool.get_connected_storage('S3Data')
@@ -36,6 +42,8 @@ class BayesianPostgres(PostgresBase):
         return WorkerResult(
             worker=task_name,
             worker_id=task_id,
+            started_at=result.get('_audit', {}).get('started_at') if result else None,
+            ended_at=result.get('_audit', {}).get('ended_at') if result else None,
             analysis_id=node_args.get('document_id') if isinstance(node_args, dict) else None,
             task_result=result,
             error=error,
@@ -44,14 +52,12 @@ class BayesianPostgres(PostgresBase):
         )
 
     def get_latest_task_result(self, ecosystem, package, version, task_name):
-        """Get latest task result based on task name
+        """Get latest task result based on task name.
 
         :param ecosystem: name of the ecosystem
         :param package: name of the package
         :param version: package version
         :param task_name: name of task for which the latest result should be obtained
-        :param error: if False, avoid returning entries that track errors
-        :param real: if False, do not check results that are stored on S3 but
         rather return Postgres entry
         """
         # TODO: we should store date timestamps directly in WorkerResult
@@ -80,14 +86,13 @@ class BayesianPostgres(PostgresBase):
         return entry.task_result
 
     def get_latest_task_entry(self, ecosystem, package, version, task_name, error=False):
-        """Get latest task result based on task name
+        """Get latest task result based on task name.
 
         :param ecosystem: name of the ecosystem
         :param package: name of the package
+        :param version: package version
         :param task_name: name of task for which the latest result should be obtained
         :param error: if False, avoid returning entries that track errors
-        :param real: if False, do not check results that are stored on S3 but
-        rather return Postgres entry
         """
         # TODO: we should store date timestamps directly in PackageWorkerResult
         if not self.is_connected():
@@ -109,7 +114,8 @@ class BayesianPostgres(PostgresBase):
 
         return entry
 
-    def get_analysis_count(self, ecosystem, package, version):
+    @staticmethod
+    def get_analysis_count(ecosystem, package, version):
         """Get count of previously scheduled analysis for given EPV triplet.
 
         :param ecosystem: str, Ecosystem name
@@ -117,7 +123,7 @@ class BayesianPostgres(PostgresBase):
         :param version: str, Package version
         :return: analysis count
         """
-        if ecosystem == 'maven':
+        if Ecosystem.by_name(PostgresBase.session, ecosystem).is_backed_by(EcosystemBackend.maven):
             package = MavenCoordinates.normalize_str(package)
 
         try:
@@ -152,7 +158,8 @@ class BayesianPostgres(PostgresBase):
 
         return list(chain(*task_names))
 
-    def get_worker_id_count(self, worker_id):
+    @staticmethod
+    def get_worker_id_count(worker_id):
         """Get number of results that has the given worker_id assigned (should be always 0 or 1).
 
         :param worker_id: unique worker id
@@ -167,7 +174,7 @@ class BayesianPostgres(PostgresBase):
 
     @staticmethod
     def get_analysis_by_id(analysis_id):
-        """Get result of previously scheduled analysis
+        """Get result of previously scheduled analysis.
 
         :param analysis_id: str, ID of analysis
         :return: analysis result
@@ -184,7 +191,7 @@ class BayesianPostgres(PostgresBase):
 
     @staticmethod
     def check_api_user_entry(email):
-        """Check if a user entry has already been made in api_requests
+        """Check if a user entry has already been made in api_requests.
 
         :param email: str, user's email id
         :return: First entry in api_requests table with matching email id
@@ -199,12 +206,13 @@ class BayesianPostgres(PostgresBase):
 
     @staticmethod
     def store_in_bucket(content):
+        """Store the conetent into S3 bucket."""
         # TODO: move to appropriate S3 storage
         s3 = StoragePool.get_connected_storage('S3UserProfileStore')
         s3.store_in_bucket(content)
 
     def store_api_requests(self, external_request_id, data, dep_data):
-        """Get result of previously scheduled analysis5
+        """Get result of previously scheduled analysis.
 
         :param external_request_id: str, ID of analysis
         :param data: bookkeeping data
@@ -220,7 +228,7 @@ class BayesianPostgres(PostgresBase):
         profile_digest = hashlib.sha256(profile.encode('utf-8')).hexdigest()
         request_digest = hashlib.sha256(json.dumps(dep_data).encode('utf-8')).hexdigest()
 
-        dt = datetime.datetime.now()
+        dt = datetime.datetime.utcnow()
         if req:
             if profile_digest != req.user_profile_digest:
                 self.store_in_bucket(data.get('user_profile'))
@@ -242,6 +250,10 @@ class BayesianPostgres(PostgresBase):
         try:
             PostgresBase.session.add(req)
             PostgresBase.session.commit()
+        except IntegrityError:
+            # This is OK, the same request has been processed twice
+            PostgresBase.session.rollback()
+            pass
         except SQLAlchemyError:
             PostgresBase.session.rollback()
             raise
@@ -251,7 +263,6 @@ class BayesianPostgres(PostgresBase):
     @staticmethod
     def get_analysed_versions(ecosystem, package):
         """Return all already analysed versions for the given package.
-
 
         :param ecosystem: str, Ecosystem name
         :param package: str, Package name

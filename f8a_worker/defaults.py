@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
-from os import environ
-from urllib.parse import quote
+
+"""Configuration."""
+
+import logging
+from urllib.parse import quote, urljoin
+
+import random
+from os import environ, path
+
+from f8a_worker.enums import EcosystemBackend
+from f8a_worker.errors import F8AConfigurationException
+
+logger = logging.getLogger(__name__)
 
 
 class F8AConfiguration(object):
+    """Configuration."""
+
     def _make_postgres_string(password):
-        """
-        Method creates postgres connection string. It's parametrized, so it's possible to
+        """Create postgres connection string.
+
+        It's parametrized, so it's possible to
         create either quoted or unquoted version of connection string.
         Note that it's outside of class since there is no simple way how to call it inside the class
         without class initialization.
@@ -24,22 +38,6 @@ class F8AConfiguration(object):
 
     BIGQUERY_JSON_KEY = environ.get('GITHUB_CONSUMER_KEY', 'not-set')
 
-    # Pulp configuration
-    PULP_URL = environ.get('PULP_URL', 'not-set')
-    PULP_USERNAME = environ.get('PULP_USERNAME', 'not-set')
-    PULP_PASSWORD = environ.get('PULP_PASSWORD', 'not-set')
-
-    # BlackDuck configuration
-    BLACKDUCK_HOST = environ.get('BLACKDUCK_HOST', 'not-set')
-    BLACKDUCK_SCHEME = environ.get('BLACKDUCK_SCHEME', 'not-set')
-    BLACKDUCK_PORT = environ.get('BLACKDUCK_PORT', 'not-set')
-    BLACKDUCK_USERNAME = environ.get('BLACKDUCK_USERNAME', 'not-set')
-    BLACKDUCK_PASSWORD = environ.get('BLACKDUCK_PASSWORD', 'not-set')
-    BLACKDUCK_PATH = environ.get('BLACKDUCK_PATH', 'not-set')
-
-    ANITYA_URL = "http://{host}:{port}".format(host=environ.get('ANITYA_HOST', 'anitya-server'),
-                                               port=environ.get('ANITYA_PORT', '5000'))
-
     BROKER_CONNECTION = "amqp://guest@{host}:{port}".format(
         host=environ.get('RABBITMQ_SERVICE_SERVICE_HOST', 'coreapi-broker'),
         port=environ.get('RABBITMQ_SERVICE_SERVICE_PORT', '5672'))
@@ -47,7 +45,11 @@ class F8AConfiguration(object):
     GIT_USER_NAME = environ.get('GIT_USER_NAME', 'f8a')
     GIT_USER_EMAIL = environ.get('GIT_USER_EMAIL', 'f8a@f8a')
 
-    GITHUB_TOKEN = environ.get('GITHUB_TOKEN', 'not-set')
+    GITHUB_TOKEN = environ.get('GITHUB_TOKEN', 'not-set').split(',')
+    GITHUB_API = "https://api.github.com/"
+
+    LIBRARIES_IO_TOKEN = environ.get('LIBRARIES_IO_TOKEN', 'not-set')
+    LIBRARIES_IO_API = 'https://libraries.io/api'
 
     # URL to npmjs couch DB, which returns stream of changes happening in npm registry
     NPMJS_CHANGES_URL = environ.get('NPMJS_CHANGES_URL',
@@ -66,7 +68,7 @@ class F8AConfiguration(object):
     SCANCODE_PROCESSES = environ.get('SCANCODE_PROCESSES', '1')  # scancode's default is 1
     SCANCODE_PATH = environ.get('SCANCODE_PATH', '/opt/scancode-toolkit/')
     SCANCODE_IGNORE = ['*.pyc', '*.so', '*.dll', '*.rar', '*.jar',
-                       '*.zip', '*.tar', '*.tar.gz', '*.tar.xz']  # don't scan binaries
+                       '*.zip', '*.tar', '*.tar.gz', '*.tar.xz', '*.png']  # don't scan binaries
 
     # AWS S3
     AWS_S3_REGION = environ.get('AWS_S3_REGION')
@@ -106,10 +108,77 @@ class F8AConfiguration(object):
 
     @classmethod
     def is_local_deployment(cls):
-        """
-        :return: True if we are running locally
-        """
+        """Return True if we are running locally."""
         return environ.get('F8A_UNCLOUDED_MODE', '0').lower() in ('1', 'true', 'yes')
+
+    @classmethod
+    def _rate_limit_exceeded(cls, headers):
+        """Return True if Github API rate limit has been exceeded."""
+        # avoid cyclic import
+        from f8a_worker.utils import get_response
+        response = get_response(urljoin(cls.GITHUB_API, "rate_limit"), headers=headers)
+        remaining_attempts = response.get('rate', {}).get('remaining', 0)
+        return remaining_attempts == 0
+
+    @classmethod
+    def _decide_token_usage(cls):
+        """Randomly select and return one Github token."""
+        if len(cls.GITHUB_TOKEN) >= 1 and cls.GITHUB_TOKEN[0] == 'not-set':
+            logger.warning("No Github API token provided (GITHUB_TOKEN env variable), "
+                           "requests will be unauthenticated i.e. limited to 60 per hour")
+            return None
+        else:
+            # there might be more comma-separated tokens, randomly select one
+            return random.choice(cls.GITHUB_TOKEN).strip()
+
+    @classmethod
+    def select_random_github_token(cls):
+        """Select and test either no token or randomly chosen.
+
+        :return: token and headers dictionary
+        """
+        token = cls._decide_token_usage()
+        headers = {}
+        if token:
+            headers.update({'Authorization': 'token {token}'.format(token=token)})
+        if cls._rate_limit_exceeded(headers):
+            logger.error("No Github API token provided (GITHUB_TOKEN env variable), "
+                         "and rate limit exceeded! "
+                         "Ending now to not wait endlessly")
+            raise F8AConfigurationException("Limit for unauthorized GitHub access exceeded.")
+        return token, headers
+
+    @classmethod
+    def libraries_io_project_url(cls, ecosystem, name):
+        """Construct url to endpoint, which gets information about a project and it's versions."""
+        if ecosystem.is_backed_by(EcosystemBackend.npm):
+            # quote '/' (but not '@') in scoped package name, e.g. in '@slicemenice/item-layouter'
+            name = quote(name, safe='@')
+
+        url = '{api}/{platform}/{name}'. \
+            format(api=cls.LIBRARIES_IO_API,
+                   platform=ecosystem.backend.name,
+                   name=name)
+
+        if not cls.LIBRARIES_IO_TOKEN or cls.LIBRARIES_IO_TOKEN == 'not-set':
+            raise F8AConfigurationException("LIBRARIES_IO_TOKEN has not been set.")
+
+        if cls.LIBRARIES_IO_TOKEN != 'no-token':
+            url += '?api_key=' + cls.LIBRARIES_IO_TOKEN
+        else:
+            # 'no-token' value forces the API call to not use ANY token.
+            # It works, but if abused, they can ban your IP, so use with caution.
+            logger.warning("Libraries.io API calls will be without an API key. "
+                           "It'll work, but if you're going to analyse more packages, "
+                           "please set the LIBRARIES_IO_TOKEN to your private token.")
+
+        return url
+
+    @property
+    def dependency_check_script_path(self):
+        """Get path to OWASP dependency-check script."""
+        assert self.OWASP_DEP_CHECK_PATH, "OWASP_DEP_CHECK_PATH not set"
+        return path.join(self.OWASP_DEP_CHECK_PATH, 'bin', 'dependency-check.sh')
 
 
 configuration = F8AConfiguration()

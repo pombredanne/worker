@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 
+"""Adapter used for Package-level."""
+
 from itertools import chain
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
 from selinon import StoragePool
+
+from f8a_worker.enums import EcosystemBackend
 from f8a_worker.models import PackageAnalysis, Ecosystem, Package, PackageWorkerResult
 from f8a_worker.utils import MavenCoordinates
 
@@ -21,6 +25,7 @@ class PackagePostgres(PostgresBase):
 
     @property
     def s3(self):
+        """Retrieve the connector to the S3 database."""
         # Do S3 retrieval lazily so tests do not complain about S3 setup
         if self._s3 is None:
             self._s3 = StoragePool.get_connected_storage('S3PackageData')
@@ -33,6 +38,8 @@ class PackagePostgres(PostgresBase):
         return PackageWorkerResult(
             worker=task_name,
             worker_id=task_id,
+            started_at=result.get('_audit', {}).get('started_at') if result else None,
+            ended_at=result.get('_audit', {}).get('ended_at') if result else None,
             package_analysis_id=(node_args.get('document_id')
                                  if isinstance(node_args, dict) else None),
             task_result=result,
@@ -41,13 +48,13 @@ class PackagePostgres(PostgresBase):
                                  if isinstance(node_args, dict) else None)
         )
 
-    def get_analysis_by_id(self, analysis_id):
-        """Get result of previously scheduled analysis
+    @staticmethod
+    def get_analysis_by_id(analysis_id):
+        """Get result of previously scheduled analysis.
 
         :param analysis_id: str, ID of analysis
         :return: analysis result
         """
-
         try:
             return PostgresBase.session.query(PackageAnalysis).\
                                         filter(PackageAnalysis.id == analysis_id).\
@@ -58,14 +65,15 @@ class PackagePostgres(PostgresBase):
             PostgresBase.session.rollback()
             raise
 
-    def get_analysis_count(self, ecosystem, package):
+    @staticmethod
+    def get_analysis_count(ecosystem, package):
         """Get count of previously scheduled analyses for given ecosystem-package.
 
         :param ecosystem: str, Ecosystem name
         :param package: str, Package name
         :return: analysis count
         """
-        if ecosystem == 'maven':
+        if Ecosystem.by_name(PostgresBase.session, ecosystem).is_backed_by(EcosystemBackend.maven):
             package = MavenCoordinates.normalize_str(package)
 
         try:
@@ -80,7 +88,8 @@ class PackagePostgres(PostgresBase):
 
         return count
 
-    def get_worker_id_count(self, worker_id):
+    @staticmethod
+    def get_worker_id_count(worker_id):
         """Get number of results that has the given worker_id assigned (should be always 0 or 1).
 
         :param worker_id: unique worker id
@@ -113,7 +122,7 @@ class PackagePostgres(PostgresBase):
         return list(chain(*task_names))
 
     def get_latest_task_result(self, ecosystem, package, task_name):
-        """Get latest task result based on task name
+        """Get latest task result based on task name.
 
         :param ecosystem: name of the ecosystem
         :param package: name of the package
@@ -180,7 +189,7 @@ class PackagePostgres(PostgresBase):
         return entry.task_result
 
     def get_latest_task_entry(self, ecosystem, package, task_name, error=False):
-        """Get latest task result based on task name
+        """Get latest task result based on task name.
 
         :param ecosystem: name of the ecosystem
         :param package: name of the package

@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+
+"""Tests for JSON schema libraries."""
+
 import json
 import os
 
@@ -16,24 +19,30 @@ from f8a_worker.schemas import (SchemaRef, SchemaLibrary,
 
 @pytest.mark.offline
 class TestSchemaRef(object):
+    """Tests for the SchemaRef class."""
 
     def test_next_addition(self):
+        """Tests for the method SchemaRef.next_addition."""
         schema_ref = SchemaRef("example", "1-0-0")
         assert schema_ref.next_addition() == SchemaRef("example", "1-0-1")
 
     def test_next_revision(self):
+        """Tests for the method SchemaRef.next_revision."""
         schema_ref = SchemaRef("example", "1-0-0")
         assert schema_ref.next_revision() == SchemaRef("example", "1-1-0")
 
     def test_next_model(self):
+        """Tests for the method SchemaRef.next_model."""
         schema_ref = SchemaRef("example", "1-0-0")
         assert schema_ref.next_model() == SchemaRef("example", "2-0-0")
 
 
 @pytest.mark.offline
 class TestSchemaLibrary(object):
+    """Tests for the SchemaLibrary class."""
 
     def test_schema_lookup(self, tmpdir):
+        """Tests for schema lookup."""
         library = SchemaLibrary(str(tmpdir))
         requested_schema = SchemaRef("example", "1-0-0")
         with pytest.raises(SchemaLookupError):
@@ -46,6 +55,7 @@ class TestSchemaLibrary(object):
         assert library.load_schema(requested_schema) == dummy_schema
 
     def test_bundled_schema_lookup(self, tmpdir):
+        """Tests for bundled schema lookup."""
         pkgdir = tmpdir.mkdir(tmpdir.basename)
         pkgdir.ensure("__init__.py")
         schemadir = pkgdir.mkdir("schemas")
@@ -62,6 +72,7 @@ class TestSchemaLibrary(object):
         assert library.load_schema(requested_schema) == dummy_schema
 
     def test_bundled_dynamic_schema_lookup(self, tmpdir, monkeypatch):
+        """Tests for bundled dynamic schema lookup."""
         pkgdir = tmpdir.mkdir(tmpdir.basename)
         pkgdir.ensure("__init__.py")
         schemadir = pkgdir.mkdir("schemas")
@@ -105,10 +116,14 @@ class TestSchemaLibrary(object):
 
 @pytest.mark.offline
 class TestGeneratedSchemas(object):
+    """Tests for all already generated worker schemas."""
+
     schemas_path = os.path.join("data", "schemas")
 
     def test_dynamic_schemas_against_generated(self):
-        """This test checks that previously generated schemas haven't changed
+        """Check for the schema chanes.
+
+        This test checks that previously generated schemas haven't changed
         by later modifications to the Python definitions.
         When you define new schemas or new versions of schemas, you'll need
         to run data/schemas/generate.py to get them generated.
@@ -121,5 +136,9 @@ class TestGeneratedSchemas(object):
 
 @pytest.mark.offline
 class TestSchemaSequence:
+    """Tests for the function assert_no_two_consecutive_schemas_are_same."""
+
     def test_no_two_consecutive_schemas_are_same(self):
+        """Test the function assert_no_two_consecutive_schemas_are_same for all worker schemas."""
         assert_no_two_consecutive_schemas_are_same(load_all_worker_schemas)
+    # TODO: test for wrong input, test for empty list of schemas etc.

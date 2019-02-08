@@ -1,4 +1,5 @@
-import os
+"""Bookkeeper Task."""
+
 import json
 from selinon import StoragePool
 from f8a_worker.base import BaseTask
@@ -7,11 +8,13 @@ from f8a_worker.utils import get_session_retry
 
 
 class BookkeeperTask(BaseTask):
-    """ Keep bookkeeping data on RDS """
+    """Keep bookkeeping data on RDS."""
+
     # we don't want to add `_audit` etc into the manifest submitted
     add_audit_info = False
 
     def store_user_node(self, arguments, aggregated):
+        """Store GraphAggregatorTask's result to graph."""
         for result in aggregated['result']:
             resolved = result['details'][0]['_resolved']
             ecosystem = result['details'][0]['ecosystem']
@@ -59,6 +62,11 @@ class BookkeeperTask(BaseTask):
                 continue
 
     def execute(self, arguments):
+        """Task code.
+
+        :param arguments: dictionary with task arguments
+        :return: {}, results
+        """
         self._strict_assert(arguments.get('external_request_id'))
         self._strict_assert(arguments.get('data'))
 

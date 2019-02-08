@@ -1,4 +1,5 @@
-"""
+"""Computes various digests of all files found in target cache path.
+
 output: list of files in directory and along with their hashes (md5, sha1, sha256, ssdeep)
 
 sample output:
@@ -17,21 +18,20 @@ sample output:
 """
 
 import os
-from f8a_worker.utils import (
-    get_all_files_from, TimedCommand, skip_git_files, compute_digest
-)
-from f8a_worker.schemas import SchemaRef
 from f8a_worker.base import BaseTask
 from f8a_worker.object_cache import ObjectCache
+from f8a_worker.utils import TimedCommand, compute_digest
+from f8a_worker.schemas import SchemaRef
 
 
 class DigesterTask(BaseTask):
-    """ Computes various digests of all files found in target cache path """
+    """Computes various digests of all files found in target cache path."""
+
     _analysis_name = 'digests'
     schema_ref = SchemaRef(_analysis_name, '1-0-0')
 
     def compute_ssdeep(self, target):
-        """ Compute SSdeep piece-wise linear hash of target """
+        """Compute SSdeep piece-wise linear hash of target."""
         # 0 : ssdeep header
         # 1 : hash,filename
         data = TimedCommand.get_command_output(['ssdeep', '-c', '-s', target])
@@ -42,6 +42,7 @@ class DigesterTask(BaseTask):
             raise RuntimeError("can't compute digest of %r" % target) from exc
 
     def compute_digests(self, cache_path, f, artifact=False):
+        """Compute digests of tarball f."""
         f_digests = {
             'sha256': compute_digest(f, 'sha256'),
             'sha1': compute_digest(f, 'sha1'),
@@ -58,6 +59,11 @@ class DigesterTask(BaseTask):
         return f_digests
 
     def execute(self, arguments):
+        """Task code.
+
+        :param arguments: dictionary with task arguments
+        :return: {}, results
+        """
         self._strict_assert(arguments.get('ecosystem'))
         self._strict_assert(arguments.get('name'))
         self._strict_assert(arguments.get('version'))

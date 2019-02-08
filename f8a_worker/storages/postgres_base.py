@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 
+"""Base class for PostgreSQL related adapters."""
+
 import os
+
+from selinon import DataStorage
 from sqlalchemy import create_engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import NoResultFound, MultipleResultsFound
-from selinon import DataStorage
-from f8a_worker.models import Ecosystem
 
+from f8a_worker.errors import TaskAlreadyExistsError
+from f8a_worker.models import Ecosystem
 
 Base = declarative_base()
 
@@ -29,6 +33,7 @@ class PostgresBase(DataStorage):
                           "base for connecting to different PostgreSQL instances"
 
     def __init__(self, connection_string, encoding='utf-8', echo=False):
+        """Configure database connector."""
         super().__init__()
 
         connection_string = connection_string.format(**os.environ)
@@ -52,9 +57,11 @@ class PostgresBase(DataStorage):
         self._s3 = None
 
     def is_connected(self):
+        """Check if the connection to database has been established."""
         return PostgresBase.session is not None
 
     def connect(self):
+        """Establish connection to the databse."""
         # Keep one connection alive and keep overflow unlimited so we can add
         # more connections in our jobs service
         engine = create_engine(
@@ -69,18 +76,20 @@ class PostgresBase(DataStorage):
         Base.metadata.create_all(engine)
 
     def disconnect(self):
+        """Close connection to the database."""
         if self.is_connected():
             PostgresBase.session.close()
             PostgresBase.session = None
 
     def retrieve(self, flow_name, task_name, task_id):
+        """Retrieve the record identified by task_id from the database."""
         if not self.is_connected():
             self.connect()
 
         try:
-            record = PostgresBase.session.query(self.query_table).\
-                                          filter_by(worker_id=task_id).\
-                                          one()
+            record = PostgresBase.session.query(self.query_table). \
+                filter_by(worker_id=task_id). \
+                one()
         except (NoResultFound, MultipleResultsFound):
             raise
         except SQLAlchemyError:
@@ -102,10 +111,11 @@ class PostgresBase(DataStorage):
 
         return task_result
 
-    def _create_result_entry(self, node_args, flow_name, task_name, task_id, result, error=False):
+    def _create_result_entry(self, node_args, flow_name, task_name, task_id, result):
         raise NotImplementedError()
 
     def store(self, node_args, flow_name, task_name, task_id, result):
+        """Store the record identified by task_id into the database."""
         # Sanity checks
         if not self.is_connected():
             self.connect()
@@ -114,40 +124,49 @@ class PostgresBase(DataStorage):
         try:
             PostgresBase.session.add(res)
             PostgresBase.session.commit()
+        except IntegrityError:
+            # the result has been already stored before the error occurred
+            # hence there is no reason to re-raise
+            PostgresBase.session.rollback()
         except SQLAlchemyError:
             PostgresBase.session.rollback()
             raise
 
-    def store_error(self, node_args, flow_name, task_name, task_id, exc_info):
-        #
-        # We do not store errors in init tasks - the reasoning is that init
-        # tasks are responsible for creating database entries. We cannot rely
-        # that all database entries are successfully created. By doing this we
-        # remove weird-looking errors like (un-committed changes due to errors
-        # in init task):
-        #   DETAIL: Key (package_analysis_id)=(1113452) is not present in table "package_analyses".
-        #
-        # Note that raising NotImplementedError will cause Selinon to treat
-        # behaviour correctly - no error is permanently stored (but reported in
-        # logs).
-        #
-        if task_name in ('InitPackageFlow', 'InitAnalysisFlow'):
-            raise NotImplementedError()
+    def store_error(self, node_args, flow_name, task_name, task_id, exc_info, result=None):
+        """Store error info to the Postgres database.
+
+        Note: We do not store errors in init tasks.
+
+        The reasoning is that init
+        tasks are responsible for creating database entries. We cannot rely
+        that all database entries are successfully created. By doing this we
+        remove weird-looking errors like (un-committed changes due to errors
+        in init task):
+          DETAIL: Key (package_analysis_id)=(1113452) is not present in table "package_analyses".
+        """
+        if task_name in ('InitPackageFlow', 'InitAnalysisFlow')\
+                or issubclass(exc_info[0], TaskAlreadyExistsError):
+            return
 
         # Sanity checks
         if not self.is_connected():
             self.connect()
 
-        res = self._create_result_entry(node_args, flow_name, task_name, task_id, result=None,
+        res = self._create_result_entry(node_args, flow_name, task_name, task_id, result=result,
                                         error=True)
         try:
             PostgresBase.session.add(res)
             PostgresBase.session.commit()
+        except IntegrityError:
+            # the result has been already stored before the error occurred
+            # hence there is no reason to re-raise
+            PostgresBase.session.rollback()
         except SQLAlchemyError:
             PostgresBase.session.rollback()
             raise
 
     def get_ecosystem(self, name):
+        """Get ecosystem by name."""
         if not self.is_connected():
             self.connect()
 
