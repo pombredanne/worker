@@ -44,6 +44,7 @@ class NpmDataNormalizer(AbstractDataNormalizer):
         self._transform_maintainers()
         self._transform_code_repository()
         self._transform_declared_licenses()
+        self._transform_description()
         self._transform_dependencies()
         self._transform_engines()
         self._transform_keywords()
@@ -63,28 +64,33 @@ class NpmDataNormalizer(AbstractDataNormalizer):
         if 'scripts' in self._data:  # added by _handle_javascript()
             if self._data['scripts'] is None:
                 return False
-            else:
+            elif type(self._data['scripts']) is dict:
                 test_script = self._data['scripts'].get('test', '')
                 # Existing test_script doesn't say much about whether it really runs some tests.
                 # For example: 'npm init' uses 'echo "Error: no test specified" && exit 1'
                 # as a default value of 'scripts'.'test'
                 return isinstance(test_script, str) and test_script != '' \
                     and 'Error: no test specified' not in test_script
+            else:
+                return False
 
     def _transform_bug_reporting(self):
         if isinstance(self._data.get('bug_reporting'), dict):
             self._data['bug_reporting'] = self._join_name_email(self._data['bug_reporting'], 'url')
+        else:
+            self._data['bug_reporting'] = None
 
     def _transform_author(self):
-        if self._data.get('author'):
-            if isinstance(self._data.get('author'), dict):
-                self._data['author'] = self._join_name_email(self._data['author'])
-            elif isinstance(self._data.get('author'), list):
-                # Process it even it violates https://docs.npmjs.com/files/package.json
-                if isinstance(self._data['author'][0], dict):
-                    self._data['author'] = self._join_name_email(self._data['author'][0])
-                elif isinstance(self._data['author'][0], str):
-                    self._data['author'] = self._data['author'][0]
+        if isinstance(self._data.get('author'), dict):
+            self._data['author'] = self._join_name_email(self._data['author'])
+        elif isinstance(self._data.get('author'), list):
+            # Process it even it violates https://docs.npmjs.com/files/package.json
+            if isinstance(self._data['author'][0], dict):
+                self._data['author'] = self._join_name_email(self._data['author'][0])
+            elif isinstance(self._data['author'][0], str):
+                self._data['author'] = self._data['author'][0]
+        else:
+            self._data['author'] = None
 
     def _transform_contributors(self):
         if self._data['contributors'] is not None:
@@ -140,6 +146,7 @@ class NpmDataNormalizer(AbstractDataNormalizer):
         value = self._data[k]
 
         if not value:
+            self._data[k] = None
             return
 
         if isinstance(value, str):
@@ -175,16 +182,33 @@ class NpmDataNormalizer(AbstractDataNormalizer):
                     licenses.append(l["name"])
         self._data[k] = licenses
 
+    def _transform_description(self):
+        key = 'description'
+        value = self._data[key]
+        if isinstance(value, str):
+            return
+        elif isinstance(value, (list, tuple)):
+            self._data[key] = ' '.join(value)
+        elif value is not None:
+            self._data[key] = str(value)
+        else:
+            self._data[key] = None
+
     def _transform_dependencies(self):
         # transform dict dependencies into flat list of strings
         # name and version spec are separated by ' ' space
         for dep_section in ('dependencies', 'devel_dependencies'):
+            if isinstance(self._data.get(dep_section), list):
+                return
             # we also want to translate empty dict to empty list
-            if isinstance(self._data.get(dep_section), dict):
+            elif isinstance(self._data.get(dep_section), dict):
                 flat_deps = []
                 for name, spec in self._data[dep_section].items():
                     flat_deps.append('{} {}'.format(name, spec))
                 self._data[dep_section] = flat_deps
+            else:
+                # some trash, like for example a boolean value; ignore...
+                self._data[dep_section] = []
 
     def _transform_engines(self):
         engines = self._data['engines']

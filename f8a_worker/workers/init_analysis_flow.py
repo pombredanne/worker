@@ -3,6 +3,7 @@
 import os
 import datetime
 import shutil
+import re
 from selinon import FatalTaskError
 from sqlalchemy.orm.exc import NoResultFound
 from tempfile import mkdtemp
@@ -12,6 +13,12 @@ from f8a_worker.base import BaseTask
 from f8a_worker.process import IndianaJones, MavenCoordinates
 from f8a_worker.models import Analysis, EcosystemBackend, Ecosystem, Version, Package
 from f8a_worker.utils import normalize_package_name
+from f8a_utils.versions import is_pkg_public
+from f8a_worker.errors import NotABugFatalTaskError
+
+
+pattern = r'[\*Xx\-\>\=\<\~\^\|\/\:\+]'
+pattern_ignore = re.compile(pattern)
 
 
 class InitAnalysisFlow(BaseTask):
@@ -36,6 +43,22 @@ class InitAnalysisFlow(BaseTask):
 
         # make sure we store package name in its normalized form
         arguments['name'] = normalize_package_name(ecosystem.backend.name, arguments['name'])
+
+        if len(pattern_ignore.findall(arguments['version'])) > 0:
+            self.log.info("Incorrect version alert {} {}".format(
+                arguments['name'], arguments['version']))
+            raise NotABugFatalTaskError("Incorrect version alert {} {}".format(
+                arguments['name'], arguments['version']))
+
+        # Dont try ingestion for private packages
+        if is_pkg_public(arguments['ecosystem'], arguments['name']):
+            self.log.info("Ingestion flow for {} {}".format(
+                arguments['ecosystem'], arguments['name']))
+        else:
+            self.log.info("Private package ingestion ignored {} {}".format(
+                arguments['ecosystem'], arguments['name']))
+            raise NotABugFatalTaskError("Private package alert {} {}".format(
+                arguments['ecosystem'], arguments['name']))
 
         p = Package.get_or_create(db, ecosystem_id=ecosystem.id, name=arguments['name'])
         v = Version.get_or_create(db, package_id=p.id, identifier=arguments['version'])

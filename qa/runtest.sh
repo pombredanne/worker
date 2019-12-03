@@ -1,5 +1,9 @@
 #!/bin/bash
 
+SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
+
+pushd "${SCRIPT_DIR}/.." > /dev/null
+
 # fail if smth fails
 # the whole env will be running if test suite fails so you can debug
 set -e
@@ -8,7 +12,7 @@ set -e
 # unable to prepare context: The Dockerfile (Dockerfile.tests) must be within the build context (.)
 set -x
 
-here=$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)
+here=$(pwd)
 
 TIMESTAMP="$(date +%F-%H-%M-%S)"
 
@@ -23,6 +27,10 @@ TESTDB_CONTAINER_NAME="worker-tests-db-${TIMESTAMP}"
 TESTS3_CONTAINER_NAME="worker-tests-s3-${TIMESTAMP}"
 DOCKER_NETWORK="F8aWorkerTest"
 
+check_python_version() {
+    python3 tools/check_python_version.py 3 6
+}
+
 gc() {
   retval=$?
   # FIXME: make this configurable
@@ -34,6 +42,8 @@ gc() {
   docker network rm "${DOCKER_NETWORK}" || :
   exit $retval
 }
+
+check_python_version
 
 trap gc EXIT SIGINT
 
@@ -99,5 +109,7 @@ docker run -t \
   --env-file tests/postgres.env \
   --name="${CONTAINER_NAME}" \
   ${TEST_IMAGE_NAME} /f8a_worker/hack/exec_tests.sh $@ /f8a_worker/tests/
+
+popd > /dev/null
 
 echo "Test suite passed \\o/"

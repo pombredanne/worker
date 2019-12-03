@@ -40,7 +40,7 @@ class MercatorTask(BaseTask):
 
     _analysis_name = 'metadata'
     _dependency_tree_lock = '_dependency_tree_lock'
-    schema_ref = SchemaRef(_analysis_name, '3-3-0')
+    schema_ref = SchemaRef(_analysis_name, '4-0-0')
 
     def execute(self, arguments):
         """Execute mercator and convert it's output to JSON object."""
@@ -56,7 +56,7 @@ class MercatorTask(BaseTask):
         return self.run_mercator(arguments, cache_path)
 
     def run_mercator(self, arguments, cache_path, outermost_only=True,
-                     timeout=300, resolve_poms=True):
+                     timeout=600, resolve_poms=True):
         """Run mercator tool."""
         # TODO: reduce cyclomatic complexity
         name = arguments.get('name')
@@ -250,6 +250,8 @@ class MercatorTask(BaseTask):
                 requires_dist = requirements_txt['result']['dependencies']
             else:
                 self.log.info('Found no usable source of requirements for PKG-INFO :(')
+            if not pkg_info.get('result', None):
+                pkg_info['result'] = {}
             pkg_info['result']['requires_dist'] = requires_dist
             ret = pkg_info
         elif requirements_txt:

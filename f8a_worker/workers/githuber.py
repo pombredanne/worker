@@ -3,6 +3,7 @@
 from urllib.parse import urljoin
 
 import requests
+import datetime
 from collections import OrderedDict
 from selinon import FatalTaskError
 
@@ -18,7 +19,7 @@ class GithubTask(BaseTask):
     """Collects statistics using Github API."""
 
     _analysis_name = "github_details"
-    schema_ref = SchemaRef(_analysis_name, '2-0-1')
+    schema_ref = SchemaRef(_analysis_name, '2-0-2')
     # used for testing
     _repo_name = None
     _repo_url = None
@@ -50,7 +51,10 @@ class GithubTask(BaseTask):
     def _get_repo_stats(self, repo):
         """Collect various repository properties."""
         try:
-            contributors = get_response(repo['contributors_url'], self._headers)
+            if repo.get('contributors_url', ''):
+                contributors = get_response(repo.get('contributors_url', ''), self._headers)
+            else:
+                contributors = {}
         except NotABugTaskError as e:
             self.log.debug(e)
             contributors = {}
@@ -114,6 +118,9 @@ class GithubTask(BaseTask):
         last_year_commits = self._get_last_years_commits(repo['url'])
         commits = {'last_year_commits': {'sum': sum(last_year_commits),
                                          'weekly': last_year_commits}}
+        t_stamp = datetime.datetime.utcnow()
+        refreshed_on = {'updated_on': t_stamp.strftime("%Y-%m-%d %H:%M:%S")}
+        issues.update(refreshed_on)
         issues.update(commits)
         result_data['details'] = issues
         return result_data

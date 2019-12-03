@@ -1,19 +1,32 @@
 #!/bin/bash
 
-directories="alembic f8a_worker tests hack"
-separate_files="setup.py dead_code_whitelist.py"
+# Script to check all Python scripts for PEP-8 issues
+
+SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
+
+IFS=$'\n'
+
+# list of directories with sources to check
+directories=$(cat ${SCRIPT_DIR}/directories.txt)
+
+# list of separate files to check
+separate_files=$(cat ${SCRIPT_DIR}/files.txt)
+
 pass=0
 fail=0
 
 function prepare_venv() {
-    VIRTUALENV=$(which virtualenv)
+    VIRTUALENV="$(which virtualenv)"
     if [ $? -eq 1 ]; then
-        # python34 which is in CentOS does not have virtualenv binary
-        VIRTUALENV=$(which virtualenv-3)
+        # python36 which is in CentOS does not have virtualenv binary
+        VIRTUALENV="$(which virtualenv-3)"
     fi
 
     ${VIRTUALENV} -p python3 venv && source venv/bin/activate && python3 "$(which pip3)" install pycodestyle
 }
+
+pushd "${SCRIPT_DIR}/.."
+
 
 echo "----------------------------------------------------"
 echo "Running Python linter against following directories:"
@@ -47,14 +60,14 @@ done
 echo
 echo "----------------------------------------------------"
 echo "Running Python linter against selected files:"
-echo $separate_files
+echo "$separate_files"
 echo "----------------------------------------------------"
 
 # check for individual files
 for source in $separate_files
 do
-    echo $source
-    pycodestyle $source
+    echo "$source"
+    pycodestyle "$source"
     if [ $? -eq 0 ]
     then
         echo "    Pass"
@@ -74,3 +87,5 @@ else
     echo "Linter fail, $fail source files out of $total source files need to be fixed"
     exit 1
 fi
+
+popd
